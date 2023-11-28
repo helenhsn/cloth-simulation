@@ -1,0 +1,234 @@
+#ifndef EXPLICIT_SOLVER_H
+#define EXPLICIT_SOLVER_H
+
+#include "mesh.hcu"
+#include "glm/glm.hpp"
+
+using namespace std;
+
+
+__device__ float dot(glm::vec3 a, glm::vec3 b)
+{
+    return a.x*b.x + a.y*b.y + a.z*b.z;
+}
+
+__device__ bool is_corner(int k, int N)
+{
+    return k == 0 || k == (N*N-1) || k == (N*(N-1)) || k == (N-1);
+}
+
+__device__ glm::vec3 spring_force(int id_i, int id_j, glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float k_s, float k_d, float h, int N, bool is_shear_stretch)
+{
+    float tau_c = 0.05;
+    glm::vec3 diff_xij = x_j- x_i;
+    float length_xi_xj  = sqrt(dot(diff_xij, diff_xij));
+    float c_spring = k_s*(1.0f - L/length_xi_xj);
+
+    float shrinking_rate = (length_xi_xj - L)/L;
+    glm::vec3 spring = c_spring * diff_xij;
+
+    if (is_shear_stretch && shrinking_rate > tau_c)
+    {
+        float correction = k_s*(1.0f - (1.0+tau_c) * L/length_xi_xj);
+        
+        // if second point in spring is fixed -> correct value when length is too high
+        if (id_j == 0 || id_j == N*(N-1)) {
+            // printf("id_i = %i && id_j = %i", id_i, id_j);
+            // printf(" SPRING BEFORE CORRECTION = %f %f %f \n", spring.x, spring.y, spring.z);
+            spring += diff_xij*correction;
+            //printf(" SPRING AFTER CORRECTION = %f %f %f \n\n\n", spring.x, spring.y, spring.z);
+        } 
+            
+        
+        // if first point && second point are not fixed
+        if (id_j != 0 && id_j != N*(N-1) && id_i != 0 && id_i != (N*(N-1))) spring+=0.5f*correction*diff_xij;
+    }
+
+    glm::vec3 damping = -k_d*v_i; // opposite direction of the velocity of the first point in spring <!>
+    return spring+damping;
+}
+
+__global__ void init_scheme(glm::vec3 *v_n, glm::vec3 *n_n, float *m_i, int N, float m)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+    
+    
+    v_n[tid] = glm::vec3(0.0);
+    n_n[tid] = glm::vec3(0.0);
+    m_i[tid] = m;
+}
+
+__global__ void update_internal_forces(glm::vec3 *f, glm::vec3 *x_n, glm::vec3 *v_n, glm::vec3 *n, float *m, float h, float L, float k_s, float k_d, int N)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+    int N_m1 = N-1;
+
+    glm::vec3 fi = glm::vec3(0.0, 0.0, 0.0);
+    float stretch_L =sqrt(2.0*L*L);
+    float bend_L = 2.0*L;
+    float bend_diag_L = 2.0*stretch_L;
+
+    // computing wind coefficient
+    if (j%N != 0 && i%N != 0 )
+    {
+        glm::vec3 shear_vec1 = j==N_m1 && j != 0? x_n[tid] - x_n[tid-N] : x_n[tid+N] - x_n[tid];
+        glm::vec3 shear_vec2 = i ==N_m1 && i != 0? x_n[tid] - x_n[tid-1] : x_n[tid+1] - x_n[tid];
+        n[tid] = -cross(shear_vec1, shear_vec2);
+    }
+
+    // shear/structural forces update <!>
+    
+    fi += (i != N_m1) ? spring_force(tid, tid+1, x_n[tid], v_n[tid], x_n[tid+1], v_n[tid+1], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // bottom
+    fi += (i != 0) ? spring_force(tid, tid-1, x_n[tid], v_n[tid], x_n[tid-1], v_n[tid-1], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // top
+    fi += (j != N_m1) ? spring_force(tid, tid+N, x_n[tid], v_n[tid], x_n[tid+N], v_n[tid+N], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // right
+    fi += (j != 0) ? spring_force(tid, tid-N, x_n[tid], v_n[tid], x_n[tid-N], v_n[tid-N], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // left
+
+    // stretch forces update <!>
+    fi += (i != N_m1 && j != N_m1) ? spring_force(tid, tid+N+1, x_n[tid], v_n[tid], x_n[tid+N+1], v_n[tid+N+1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // bottom right
+    fi += (i != N_m1 && j != 0) ? spring_force(tid, tid-N+1, x_n[tid], v_n[tid], x_n[tid-N+1], v_n[tid-N+1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // bottom left
+    fi += (i != 0 && j != N_m1) ? spring_force(tid, tid+N-1, x_n[tid], v_n[tid], x_n[tid+N-1], v_n[tid+N-1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // top right
+    fi += (i != 0 && j != 0) ? spring_force(tid, tid-N-1, x_n[tid], v_n[tid], x_n[tid-N-1], v_n[tid-N-1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // top left
+
+    // // // bend forces update <!>
+    int N_m2 = N-2;
+    fi += (j < N_m2) ? spring_force(tid, tid+2*N, x_n[tid], v_n[tid], x_n[tid+2*N], v_n[tid+2*N], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // right
+    fi += (j > 1) ? spring_force(tid, tid-2*N, x_n[tid], v_n[tid], x_n[tid-2*N], v_n[tid-2*N], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // left
+    fi += (i > 1) ? spring_force(tid, tid-2, x_n[tid], v_n[tid], x_n[tid-2], v_n[tid-2], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // top
+    fi += (i < N_m2) ? spring_force(tid, tid+2, x_n[tid], v_n[tid], x_n[tid+2], v_n[tid+2], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // bottom
+
+    fi += (i < N_m2 && j < N_m2) ? spring_force(tid, tid+2*N+2, x_n[tid], v_n[tid], x_n[tid+2*N+2], v_n[tid+2*N+2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // bottom right
+    fi += (i < N_m2 && j > 1) ? spring_force(tid, tid-2*N+2, x_n[tid], v_n[tid], x_n[tid-2*N+2], v_n[tid-2*N+2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // bottom left
+    fi += (i > 1 && j < N_m2) ? spring_force(tid, tid+2*N-2, x_n[tid], v_n[tid], x_n[tid+2*N-2], v_n[tid+2*N-2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // top right
+    fi += (i > 1 && j > 1) ? spring_force(tid, tid-2*N-2, x_n[tid], v_n[tid], x_n[tid-2*N-2], v_n[tid-2*N-2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // top left
+
+    // sum of all internal forces
+    f[tid] = fi;
+
+}
+
+__device__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
+{
+    return glm::vec3(a.x*b.y - a.y*b.x, a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z);
+}
+
+__device__ glm::vec3 compute_external_forces(int i, int j, int N, glm::vec3 *n, float m_i, glm::vec3 wind_dir)
+{
+    glm::vec3 gravity = glm::vec3(0.0, -9.81*m_i, 0.0);
+
+    int N_m1 = N-1;
+    int tid = j*N + i;
+    if (tid%N == 0 || tid%N_m1 == 0) return gravity;
+
+    // computing wind coefficient
+
+    glm::vec3 wind_force = dot(n[tid], wind_dir) * wind_dir;
+
+    return gravity + wind_force;
+
+}
+
+__global__ void update_positions_scheme(glm::vec3 *fi, glm::vec3 *x_n, glm::vec3 *v_n, glm::vec3 *n, float *m, float h, int N, glm::vec3 wind_dir, float time)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+
+    glm::vec3 f_e = compute_external_forces(i, j, N, n, m[tid], wind_dir);
+    //glm::vec3 f_e = glm::vec3(0.0);
+
+    glm::vec3 f_i = fi[tid];
+    //glm::vec3 f_i = glm::vec3(0.0);
+
+    // using Verlet integration scheme
+    glm::vec3 last_pos = x_n[tid];
+    glm::vec3 sum = f_e + f_i;
+    if (tid!=0 && tid != N*(N-1)) 
+    {
+        x_n[tid] = x_n[tid] + h*v_n[tid] + 0.5f*h*h*(f_e + f_i)/m[tid];
+        v_n[tid] = (x_n[tid] - last_pos)/h;
+        //printf(" f_i PASBORD = %f %f %f \n", sum.x, sum.y, sum.z);
+        //printf("&& SPEED = %f %f %f \n\n", v_n[tid].x, v_n[tid].y, v_n[tid].z);
+    }
+    else 
+    {
+        // int temp = (N-1)*N;
+        //x_n[temp].z += cos(time)*0.05;
+        // x_n[tid].y += tid == N*(N-1)? 0.05*cos(time+3.141592): 0.0;
+
+        v_n[tid] = glm::vec3(0.0);
+        //printf(" f_i bord = %f %f %f \n\n", sum.x, sum.y, sum.z);
+    }
+
+}
+
+
+class ExplicitSolver
+{
+    private:
+
+    float h;
+    float L;
+    float k_s;
+    float k_d;
+
+    glm::vec3 *f_i; // sum of internal forces for each particle
+    glm::vec3 *v_n; // current velocity for each particle
+    glm::vec3 *n_n; // current normal for each particle
+    float *m_i; // mass for each particle
+
+    public:
+
+    ~ExplicitSolver()=default;
+
+    ExplicitSolver():k_d(0.0), k_s(0.0), h(0.1), L(1.0) {
+    };
+
+
+    ExplicitSolver(Plane *grid, const float &m, const float &k_s, const float &k_d, const float &h, const float &L=1.0) : 
+    h(h), L(L), k_s(k_s), k_d(k_d)
+    {
+        std::cout << "N = " << grid->N << " && NB DE PTS :" << grid->get_vertices_nb() << std::endl << std::flush ;
+
+        
+        // solver's buffers allocation
+        cudaErrorCheck(cudaMalloc((void **) &f_i, sizeof(glm::vec3)*grid->get_vertices_nb()));
+        cudaErrorCheck(cudaMalloc((void **) &v_n, sizeof(glm::vec3)*grid->get_vertices_nb()));
+        cudaErrorCheck(cudaMalloc((void **) &m_i, sizeof(float)*grid->get_vertices_nb()));
+        
+        // run cuda kernel
+        dim3 dim_grid((grid->N+31)/32, (grid->N+31)/32);
+        dim3 dim_block(32, 32);
+
+        init_scheme<<<dim_grid, dim_block>>>(v_n,  (glm::vec3 *) grid->get_dptr(1), m_i, grid->N, m);
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+
+    };
+
+    void step(Plane *grid, float time)
+    {
+        // run cuda kernel
+        dim3 dim_grid((grid->N+31)/32, (grid->N+31)/32);
+        dim3 dim_block(32, 32);
+
+
+        // Computing internal forces FIRST
+        update_internal_forces<<<dim_grid, dim_block>>>(f_i, (glm::vec3 *) grid->get_dptr(0), v_n,  (glm::vec3 *) grid->get_dptr(1), m_i, h, L, k_s, k_d, grid->N);
+        cudaErrorCheck(cudaDeviceSynchronize());
+        
+        // Computing new positions with new internal forces
+        float factor = 20.0f*glm::smoothstep(0.0f, 0.7f,sin(time*0.4f));
+        update_positions_scheme<<<dim_grid, dim_block>>>(f_i, (glm::vec3 *) grid->get_dptr(0), v_n,  (glm::vec3 *) grid->get_dptr(1), m_i, h, grid->N, glm::vec3(factor, 0.0, factor), time);
+        cudaErrorCheck(cudaDeviceSynchronize());
+    };
+
+};
+
+#endif

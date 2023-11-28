@@ -1,0 +1,23 @@
+#include <iostream>
+
+extern __host__ void cudaErrorCheck(cudaError_t err)
+{
+    if (err != cudaSuccess)
+        std::cout << "CUDA Error: " << cudaGetErrorString(err) << std::endl << std::flush;
+}
+
+extern __host__ void bindBuffer(float * &d_ptr, cudaGraphicsResource_t &res)
+{
+    ///////////////// execute mapping (mark cuda var as graphics resource and request device ptr to access VBO from CUDA code!)
+    size_t memory_size;
+
+    cudaErrorCheck(cudaGraphicsMapResources(1,  &res, 0)); // mapping 1 resource to CUDA's var and synchronizing with stream 0
+    cudaErrorCheck(cudaGraphicsResourceGetMappedPointer((void **) &d_ptr, &memory_size, res));
+}
+
+extern __host__ void unbindBuffer(cudaGraphicsResource_t res)
+{
+    // unmap buffer objects (vbo, ebo) so that OpenGL can use them in the rendering loop!
+    cudaErrorCheck(cudaGraphicsUnmapResources(1, &res, 0));
+}
+

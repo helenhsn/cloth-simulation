@@ -1,0 +1,299 @@
+#ifndef MESH_H
+#define MESH_H
+
+#include "glad.h"
+#include "cuda_gl_interop.h"
+#include "cuda_utils.hcu"
+#include "shader.h"
+#include "glm/glm.hpp"
+#include <iostream>
+#include <vector>
+
+typedef struct Data 
+{
+    std::vector<glm::vec3> vertices;
+    std::vector<glm::vec3> normals;
+    std::vector<glm::vec2> uv;
+    std::vector<GLuint> indices;
+} Data;
+
+class Mesh
+{
+
+private:
+    GLuint glid_;
+    GLuint vao_ = 0;
+    GLuint vbo_[3];
+    GLuint ebo_ = 0;
+
+    int nb_vbos_cuda_ = 0;
+    float **d_vbos_ptr_;
+    cudaGraphicsResource_t *cuda_res_vbos; // Cuda ptr that will point to OpenGL's VBOs
+    
+    int nb_vertices_;
+    int nb_indices_;
+    
+
+public:
+    Mesh()=default;
+    Mesh(ShaderProgram pgrm, const Data &data, std::vector<bool> shared_cuda): glid_(pgrm.glid), nb_vbos_cuda_(shared_cuda.size())
+    {
+
+        nb_vertices_ = data.vertices.size();
+        nb_indices_ = data.indices.size();
+
+        glGenVertexArrays(1, &vao_);
+        glBindVertexArray(vao_);
+
+        ///////////////// VERTICES INITITIALIZATION /////////////////
+        glGenBuffers(1, &vbo_[0]);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_[0]);
+        glBufferData(GL_ARRAY_BUFFER, data.vertices.size()*sizeof(glm::vec3), data.vertices.data(), GL_STATIC_DRAW);
+        
+        GLint loc = glGetAttribLocation(pgrm.glid, "pos");
+        if (loc < 0) 
+        {
+            std::cout << "Vertices attrib not found in shader!" << std::endl;
+        }
+        glEnableVertexAttribArray(loc);
+        glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
+        
+        ///////////////// NORMALS INITITIALIZATION /////////////////
+        glGenBuffers(1, &vbo_[1]);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_[1]);
+        glBufferData(GL_ARRAY_BUFFER, data.normals.size()*sizeof(glm::vec3), data.normals.data(), GL_STATIC_DRAW);
+        
+        loc = glGetAttribLocation(pgrm.glid, "n");
+        if (loc < 0) 
+        {
+            std::cout << "Normal attrib not found in shader!" << std::endl;
+        }
+        glEnableVertexAttribArray(loc);
+        glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
+        
+        ///////////////// UV INITITIALIZATION /////////////////
+        glGenBuffers(1, &vbo_[2]);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_[2]);
+        glBufferData(GL_ARRAY_BUFFER, data.uv.size()*sizeof(glm::vec2), data.uv.data(), GL_STATIC_DRAW);
+        
+        loc = glGetAttribLocation(pgrm.glid, "uv");
+        if (loc < 0) 
+        {
+            std::cout << "UV attrib not found in shader!" << std::endl;
+        }
+        glEnableVertexAttribArray(loc);
+        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void *)0);
+
+
+        ///////////////// REGISTERING VERTICES VBO WITH CUDA <!> /////////////////
+        cuda_res_vbos = new cudaGraphicsResource_t[nb_vbos_cuda_];
+        d_vbos_ptr_ = new float*[nb_vbos_cuda_];
+        
+        for (int i = 0; i<3; i++)
+        {
+            d_vbos_ptr_[i] = nullptr;
+            cuda_res_vbos[i] = nullptr;
+            if (shared_cuda[i])
+                cudaErrorCheck(cudaGraphicsGLRegisterBuffer(&cuda_res_vbos[i], vbo_[i], cudaGraphicsMapFlagsNone));
+        }
+
+        // EBO
+        glGenBuffers(1, &ebo_);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, data.indices.size()*sizeof(GLuint), data.indices.data(), GL_STATIC_DRAW);
+    };
+
+    ~Mesh() 
+    {
+        glDeleteVertexArrays(1, &vao_);
+        vao_ = 0;
+        for (int i =0; i<3; i++)
+        {
+            if (cuda_res_vbos[i]) 
+            {
+                cudaErrorCheck(cudaGraphicsUnregisterResource(cuda_res_vbos[i]));
+            }
+            glDeleteBuffers(1, &vbo_[i]);
+            vbo_[i] = 0;
+        }
+        glDeleteBuffers(1, &ebo_);
+        ebo_ = 0;
+    };
+
+    virtual void draw()
+    {
+        glBindVertexArray(vao_);
+        glDrawElements(GL_TRIANGLES,  nb_indices_, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+    };
+
+    void bind_cuda_data()
+    {
+        for (int i=0; i<nb_vbos_cuda_; i++)
+        {
+            if (cuda_res_vbos[i]) bindBuffer(d_vbos_ptr_[i], cuda_res_vbos[i]);
+        }
+    };
+
+    void unbind_cuda_data()
+    {
+        for (int i=0; i<nb_vbos_cuda_; i++)
+        {
+            if (cuda_res_vbos[i]) unbindBuffer(cuda_res_vbos[i]);
+        }
+    };
+
+    float *get_dptr(int i)
+    {
+        return d_vbos_ptr_[i];
+    };
+
+    int get_vertices_nb() {return nb_vertices_;};
+};
+
+
+class Plane: public Mesh 
+{
+
+    public:
+    unsigned int N;
+    Plane(ShaderProgram pgrm, int &size_edge): Mesh(pgrm, Plane::init_mesh(size_edge), {true, true, false}), N(size_edge)
+    {}
+
+    static Data init_mesh(int &N_) {
+        std::cout << "fille" << std::endl << std::flush;
+        std::vector<glm::vec3> vertices;
+        std::vector<glm::vec3> normals;
+        std::vector<glm::vec2> uv;
+        std::vector<GLuint> indices;
+    
+
+        for (int j = 0; j < N_; j++)
+        {
+            for (int i = 0; i<N_; i++)
+            {
+                // filling the buffers column-wise <!> => buff = [column1, column 2, column3...]
+                vertices.push_back(glm::vec3((float) j, 0, (float) i));
+                normals.push_back(glm::vec3(0.0, 1.0, 0.0));
+                uv.push_back(glm::vec2((float) i/N_, (float) j/N_));
+            }
+        }
+
+        int N_minus_1 = N_-1;
+        // int temp = N*N_minus_1;
+        // vertices[temp].y -= 50.0;
+        for (int j = 0; j< N_minus_1; j++)
+        {
+            for (int i = 0; i<N_minus_1; i++)
+            {
+                int id = j*N_+i; // i = z-axis (OpenGL) => ROWS INDEX  != j = x-axis => COLUMN INDEX
+                // filling counter-clock wise triagles inside ebo <!>
+
+                indices.push_back(id+1); // bottom left corner
+                indices.push_back(id+N_+1); // bottom right corner
+                indices.push_back(id); // top right corner
+
+                indices.push_back(id); // top left corner
+                indices.push_back(id+N_+1); // bottom right corner
+                indices.push_back(id+N_); // top right corner
+
+            }
+        }
+
+
+        Data new_data = {vertices, normals, uv, indices}; 
+        return new_data;
+    };
+};
+
+class Sphere : public Mesh 
+{
+    private:
+    float radius_;
+    public:
+
+    Sphere(ShaderProgram pgrm, float radius, int row_count, int column_count): Mesh(pgrm, Sphere::init_mesh(radius, row_count, column_count), {true, false, false}), radius_(radius)
+    {}
+    
+    static glm::vec3 spherical_coords(float &r, float &th, float &phi)
+    {
+        //spherical coordinates when y is the up axis (OpenGL referential)
+        float cos_phi = cos(phi);
+        return glm::vec3(r*cos_phi*cos(th), r*sin(phi), r*cos_phi*sin(th));
+    }
+
+    static Data init_mesh(float &r, int &row_count, int &column_count)
+    {
+        std::vector<glm::vec3> vertices;
+        std::vector<glm::vec3> normals;
+        std::vector<glm::vec2> uv;
+        std::vector<GLuint> indices;
+        float PI = 3.14159265;
+        float ratio_row  = PI/row_count;
+        float ratio_column = 2.0*PI/column_count;
+
+        float phi = PI/2.0;
+        float th = 0.0;
+
+
+        
+        for (int i=0; i<row_count-1; i++)
+        {
+            phi -=ratio_row;
+
+            for (int j = 0; j<column_count; j++)
+            {
+                // inserting each vertex one time
+                vertices.push_back(Sphere::spherical_coords(r, th, phi));
+                normals.push_back(Sphere::spherical_coords(r, th, phi)); // n = OM vector
+                uv.push_back(glm::vec2(1.0 - phi/PI, th/(2.0*PI)));
+                th += ratio_column;
+            }
+        }
+        vertices.push_back(glm::vec3(0.0, -r, 0.0)); // bottom vertex
+        vertices.push_back(glm::vec3(0.0, r, 0.0)); // top vertex
+
+
+        // top and bottom single triangles
+        int top_vtx = vertices.size() - 1;
+        int bottom_vtx = vertices.size() - 2;
+        int b_idx = bottom_vtx - column_count;
+        int modulo = (column_count-1)*(column_count-1);
+        for (int k = 0; k<column_count; k++)
+        {
+            indices.push_back((k+1)%column_count);
+            indices.push_back(k);
+            indices.push_back(top_vtx);
+
+            if (k== (column_count - 1)) indices.push_back(bottom_vtx - column_count);
+            else indices.push_back(b_idx+1);
+            indices.push_back(bottom_vtx);
+            indices.push_back(b_idx);
+            b_idx++;
+        }
+
+        // stack triangles
+        for (int i = 0; i<row_count-2; i++)
+        {
+            for (int j = 0.0; j<column_count; j++)
+            {
+                int idx = i*column_count+j; // vertex (i, j)
+                if (j==(column_count-1)) indices.push_back(idx+1-column_count);
+                else indices.push_back(idx+1);
+                indices.push_back(idx+column_count);
+                indices.push_back(idx);
+
+                if (j==(column_count-1)) indices.push_back(idx+1);
+                else indices.push_back(idx + column_count+1);
+                indices.push_back(idx+column_count);
+                if (j==(column_count-1)) indices.push_back(idx+1-column_count);
+                else indices.push_back(idx+1);
+            }
+        }
+
+        Data new_data = {vertices, normals, uv, indices}; 
+        return new_data;
+    }
+};
+
+#endif
