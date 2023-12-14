@@ -1,5 +1,4 @@
-#include "../include/glad.h"
-#include "glad.c"
+#include "glad.h"
 #include "../include/mesh.hcu"
 #include "../include/camera.h"
 #include "../include/simulation.h"
@@ -67,8 +66,8 @@ int main()
     // setting up simulation
 
     int N = 128;
-    ShaderProgram sphere_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
-    ShaderProgram cloth_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
+    ShaderProgram sphere_pgrm("shaders/cloth.vs", "shaders/cloth.fs");
+    ShaderProgram cloth_pgrm("shaders/cloth.vs", "shaders/cloth.fs");
     Plane *grid = new Plane(cloth_pgrm, N);
     Sphere *sphere = new Sphere(sphere_pgrm, 10.0f, 50, 50);
     Simulation sim(grid);
