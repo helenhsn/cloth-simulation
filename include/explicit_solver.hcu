@@ -3,6 +3,7 @@
 
 #include "mesh.hcu"
 #include "glm/glm.hpp"
+#include "solver.h"
 
 using namespace std;
 
@@ -12,222 +13,501 @@ __device__ float dot(glm::vec3 a, glm::vec3 b)
     return a.x*b.x + a.y*b.y + a.z*b.z;
 }
 
+__device__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
+{
+    glm::vec3 res = glm::vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.y);
+    return res;
+}
+
+__device__ glm::vec3 normalize(glm::vec3 v)
+{
+    float res = dot(v, v);
+    if (res < 0.0000001) return v;
+    return v/sqrt(res);
+}
 __device__ bool is_corner(int k, int N)
 {
     return k == 0 || k == (N*N-1) || k == (N*(N-1)) || k == (N-1);
 }
 
-__device__ glm::vec3 spring_force(int id_i, int id_j, glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float k_s, float k_d, float h, int N, bool is_shear_stretch)
+__device__ glm::vec3 springForce(glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float Ks)
 {
-    float tau_c = 0.05;
     glm::vec3 diff_xij = x_j- x_i;
     float length_xi_xj  = sqrt(dot(diff_xij, diff_xij));
-    float c_spring = k_s*(1.0f - L/length_xi_xj);
-
-    float shrinking_rate = (length_xi_xj - L)/L;
+    float c_spring = Ks*(1.0f - L/length_xi_xj);
     glm::vec3 spring = c_spring * diff_xij;
 
-    if (is_shear_stretch && shrinking_rate > tau_c)
-    {
-        float correction = k_s*(1.0f - (1.0+tau_c) * L/length_xi_xj);
+    // printf("\n x id %i = %f %f %f // x id %i = %f %f %f // SPRING = %f %f %f", id_i, x_i.x, x_i.y, x_i.z, id_j, x_j.x , x_j.y, x_j.z, spring.x, spring.y, spring.z);
+
+    // float tau_c = 0.05;
+    // float shrinking_rate = (length_xi_xj - L)/L;
+
+    // if (is_shear_stretch && shrinking_rate > tau_c)
+    // {
+
+    //     float correction = Ks*(1.0f - (1.0+tau_c) * L/length_xi_xj);
         
-        // if second point in spring is fixed -> correct value when length is too high
-        if (id_j == 0 || id_j == N*(N-1)) {
-            // printf("id_i = %i && id_j = %i", id_i, id_j);
-            // printf(" SPRING BEFORE CORRECTION = %f %f %f \n", spring.x, spring.y, spring.z);
-            spring += diff_xij*correction;
-            //printf(" SPRING AFTER CORRECTION = %f %f %f \n\n\n", spring.x, spring.y, spring.z);
-        } 
+    //     // if second point in spring is fixed -> correct value when length is too high
+    //     if (id_j == 0 || id_j == N*(N-1)) {
+    //         // printf("id_i = %i && id_j = %i", id_i, id_j);
+    //         // printf(" SPRING BEFORE CORRECTION = %f %f %f \n", spring.x, spring.y, spring.z);
+    //         spring += diff_xij*correction;
+    //         //printf(" SPRING AFTER CORRECTION = %f %f %f \n\n\n", spring.x, spring.y, spring.z);
+    //     } 
             
         
-        // if first point && second point are not fixed
-        if (id_j != 0 && id_j != N*(N-1) && id_i != 0 && id_i != (N*(N-1))) spring+=0.5f*correction*diff_xij;
-    }
+    //     // if first point && second point are not fixed
+    //     if (id_j != 0 && id_j != N*(N-1) && id_i != 0 && id_i != (N*(N-1))) spring+=0.5f*correction*diff_xij;
+    // }
 
-    glm::vec3 damping = -k_d*v_i; // opposite direction of the velocity of the first point in spring <!>
-    return spring+damping;
+    return spring;
 }
 
-__global__ void init_scheme(glm::vec3 *v_n, glm::vec3 *n_n, float *m_i, int N, float m)
+__device__ glm::vec3 dampingForce(glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float Kd)
+{
+    glm::vec3 diff_vij = v_j - v_i;
+    glm::vec3 diff_xij = normalize(x_j- x_i);
+    glm::vec3 damping =  -Kd*dot(diff_vij, diff_xij)*diff_xij;
+    //printf("\n x id %i = %f %f %f // x id %i = %f %f %f // DAMPING = %f %f %f", id_i, x_i.x, x_i.y, x_i.z, id_j, x_j.x , x_j.y, x_j.z, damping.x, damping.y, damping.z);
+
+    return damping;
+}
+
+
+__global__ void updateInternalForces(int maxTid, int N, glm::ivec2 *springIds, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, float L, float Ks, float Kd)
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
-
     int tid = j*N+i;
-    
-    
-    v_n[tid] = glm::vec3(0.0);
-    n_n[tid] = glm::vec3(0.0);
-    m_i[tid] = m;
-}
 
-__global__ void update_internal_forces(glm::vec3 *f, glm::vec3 *x_n, glm::vec3 *v_n, glm::vec3 *n, float *m, float h, float L, float k_s, float k_d, int N)
-{
-    int j = threadIdx.x + blockIdx.x*blockDim.x;
-    int i = threadIdx.y + blockIdx.y*blockDim.y;
-
-    int tid = j*N+i;
-    int N_m1 = N-1;
-
-    glm::vec3 fi = glm::vec3(0.0, 0.0, 0.0);
-    float stretch_L =sqrt(2.0*L*L);
-    float bend_L = 2.0*L;
-    float bend_diag_L = 2.0*stretch_L;
-
-    // computing wind coefficient
-    if (j%N != 0 && i%N != 0 )
+    if (tid < maxTid)
     {
-        glm::vec3 shear_vec1 = j==N_m1 && j != 0? x_n[tid] - x_n[tid-N] : x_n[tid+N] - x_n[tid];
-        glm::vec3 shear_vec2 = i ==N_m1 && i != 0? x_n[tid] - x_n[tid-1] : x_n[tid+1] - x_n[tid];
-        n[tid] = -cross(shear_vec1, shear_vec2);
+        glm::ivec2 ids = springIds[tid];
+
+        glm::vec3 fSpring = springForce(xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], L, Ks);
+
+
+        // ADD DAMPING FORCE !! TODO
+        fSpring += dampingForce(xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], Kd);
+        // printf("\n\n F de Id %i == %f %f %f ", tid,  fSpring.x, fSpring.y, fSpring.z);
+
+        atomicAdd(&FIter[ids.x].x, fSpring.x);
+        atomicAdd(&FIter[ids.x].y, fSpring.y);
+        atomicAdd(&FIter[ids.x].z, fSpring.z);
+
+        atomicAdd(&FIter[ids.y].x, -fSpring.x);
+        atomicAdd(&FIter[ids.y].y, -fSpring.y);
+        atomicAdd(&FIter[ids.y].z, -fSpring.z);
     }
 
-    // shear/structural forces update <!>
-    
-    fi += (i != N_m1) ? spring_force(tid, tid+1, x_n[tid], v_n[tid], x_n[tid+1], v_n[tid+1], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // bottom
-    fi += (i != 0) ? spring_force(tid, tid-1, x_n[tid], v_n[tid], x_n[tid-1], v_n[tid-1], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // top
-    fi += (j != N_m1) ? spring_force(tid, tid+N, x_n[tid], v_n[tid], x_n[tid+N], v_n[tid+N], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // right
-    fi += (j != 0) ? spring_force(tid, tid-N, x_n[tid], v_n[tid], x_n[tid-N], v_n[tid-N], L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // left
 
-    // stretch forces update <!>
-    fi += (i != N_m1 && j != N_m1) ? spring_force(tid, tid+N+1, x_n[tid], v_n[tid], x_n[tid+N+1], v_n[tid+N+1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // bottom right
-    fi += (i != N_m1 && j != 0) ? spring_force(tid, tid-N+1, x_n[tid], v_n[tid], x_n[tid-N+1], v_n[tid-N+1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // bottom left
-    fi += (i != 0 && j != N_m1) ? spring_force(tid, tid+N-1, x_n[tid], v_n[tid], x_n[tid+N-1], v_n[tid+N-1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // top right
-    fi += (i != 0 && j != 0) ? spring_force(tid, tid-N-1, x_n[tid], v_n[tid], x_n[tid-N-1], v_n[tid-N-1], stretch_L, k_s, k_d, h, N, true) : glm::vec3(0.0, 0.0, 0.0); // top left
-
-    // // // bend forces update <!>
-    int N_m2 = N-2;
-    fi += (j < N_m2) ? spring_force(tid, tid+2*N, x_n[tid], v_n[tid], x_n[tid+2*N], v_n[tid+2*N], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // right
-    fi += (j > 1) ? spring_force(tid, tid-2*N, x_n[tid], v_n[tid], x_n[tid-2*N], v_n[tid-2*N], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // left
-    fi += (i > 1) ? spring_force(tid, tid-2, x_n[tid], v_n[tid], x_n[tid-2], v_n[tid-2], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // top
-    fi += (i < N_m2) ? spring_force(tid, tid+2, x_n[tid], v_n[tid], x_n[tid+2], v_n[tid+2], bend_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // bottom
-
-    fi += (i < N_m2 && j < N_m2) ? spring_force(tid, tid+2*N+2, x_n[tid], v_n[tid], x_n[tid+2*N+2], v_n[tid+2*N+2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // bottom right
-    fi += (i < N_m2 && j > 1) ? spring_force(tid, tid-2*N+2, x_n[tid], v_n[tid], x_n[tid-2*N+2], v_n[tid-2*N+2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // bottom left
-    fi += (i > 1 && j < N_m2) ? spring_force(tid, tid+2*N-2, x_n[tid], v_n[tid], x_n[tid+2*N-2], v_n[tid+2*N-2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // top right
-    fi += (i > 1 && j > 1) ? spring_force(tid, tid-2*N-2, x_n[tid], v_n[tid], x_n[tid-2*N-2], v_n[tid-2*N-2], bend_diag_L, k_s, k_d, h, N, false) : glm::vec3(0.0, 0.0, 0.0); // top left
-
-    // sum of all internal forces
-    f[tid] = fi;
 
 }
 
-__device__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
+__global__ void updateIterBuffers(int maxTid, int N, float kOffset, float yOffset, glm::vec3 *x, glm::vec3 *v, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *vIterAcc, float m)
 {
-    return glm::vec3(a.x*b.y - a.y*b.x, a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z);
-}
+    /**
+     * Initializes the 2 buffers used for computing RK4 iterations 
+    */
 
-__device__ glm::vec3 compute_external_forces(int i, int j, int N, glm::vec3 *n, float m_i, glm::vec3 wind_dir)
-{
-    glm::vec3 gravity = glm::vec3(0.0, -9.81*m_i, 0.0);
-
-    int N_m1 = N-1;
-    int tid = j*N + i;
-    if (tid%N == 0 || tid%N_m1 == 0) return gravity;
-
-    // computing wind coefficient
-
-    glm::vec3 wind_force = dot(n[tid], wind_dir) * wind_dir;
-
-    return gravity + wind_force;
-
-}
-
-__global__ void update_positions_scheme(glm::vec3 *fi, glm::vec3 *x_n, glm::vec3 *v_n, glm::vec3 *n, float *m, float h, int N, glm::vec3 wind_dir, float time)
-{
+    // TODO use shared mem
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
 
     int tid = j*N+i;
 
-    glm::vec3 f_e = compute_external_forces(i, j, N, n, m[tid], wind_dir);
-    //glm::vec3 f_e = glm::vec3(0.0);
-
-    glm::vec3 f_i = fi[tid];
-    //glm::vec3 f_i = glm::vec3(0.0);
-
-    // using Verlet integration scheme
-    glm::vec3 last_pos = x_n[tid];
-    glm::vec3 sum = f_e + f_i;
-    if (tid!=0 && tid != N*(N-1)) 
+    if (tid < maxTid)
     {
-        x_n[tid] = x_n[tid] + h*v_n[tid] + 0.5f*h*h*(f_e + f_i)/m[tid];
-        v_n[tid] = (x_n[tid] - last_pos)/h;
-        //printf(" f_i PASBORD = %f %f %f \n", sum.x, sum.y, sum.z);
-        //printf("&& SPEED = %f %f %f \n\n", v_n[tid].x, v_n[tid].y, v_n[tid].z);
+
+        float fixedFactor = 0.0;
+        if (tid!=0 && tid != N*(N-1))
+        {
+            fixedFactor = 1.0;
+        }
+        xIter[tid] = x[tid] + fixedFactor * yOffset * vIter[tid]; // offset x
+        vIter[tid] = v[tid] + fixedFactor * yOffset * FIter[tid]/m; // xDot1,2,3,4
+
+        vIterAcc[tid] += kOffset * vIter[tid];
+        FIter[tid] = glm::vec3(0.0);
     }
-    else 
-    {
-        // int temp = (N-1)*N;
-        //x_n[temp].z += cos(time)*0.05;
-        // x_n[tid].y += tid == N*(N-1)? 0.05*cos(time+3.141592): 0.0;
 
-        v_n[tid] = glm::vec3(0.0);
-        //printf(" f_i bord = %f %f %f \n\n", sum.x, sum.y, sum.z);
+}
+
+__device__ glm::vec3 externalForces(glm::vec3 v, glm::vec3 n, float m, glm::vec3 wind, glm::vec3 normWind, float Ka)
+{
+    /**
+     * Compute the sum of all external forces applied to a vertex.
+     *
+    */
+
+    glm::vec3 gravity = glm::vec3(0.0, -9.81*m, 0.0);
+
+    glm::vec3 windForce = dot(n, abs(wind)) * normWind;
+
+    glm::vec3 viscousForce = -Ka*v;
+
+    return gravity + windForce + viscousForce;
+}
+
+__global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *FIterAcc, glm::vec3 *n, float m, glm::vec3 wind, glm::vec3 normWind, float Ka)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+
+    if (tid < maxTid)
+    {
+        int N_m1 = N-1;
+
+        glm::vec3 shear_vec1 = j == N_m1? xIter[tid] - xIter[tid-N] : xIter[tid+N] - xIter[tid]; // right vec
+        glm::vec3 shear_vec2 = i == N_m1? xIter[tid-1] - xIter[tid] : xIter[tid] - xIter[tid+1]; // bottom up vec
+        glm::vec3 normal = cross(shear_vec1, shear_vec2);
+
+        n[tid] = normal;
+
+        FIter[tid] += externalForces(vIter[tid], normal, m, wind, normWind, Ka);
+
+        FIterAcc[tid] += kOffset * FIter[tid];
+
+        
+    }
+}
+
+__global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc, float h, float m)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+
+    if (tid < maxTid)
+    {
+
+        // using Verlet integration scheme
+        glm::vec3 last_pos = x[tid];
+
+        if (tid!=0 && tid != N*(N-1)) 
+        {
+            // RK4 
+            x[tid] = x[tid] + h*vIterAcc[tid]/6.0f;
+            v[tid] = v[tid] + h*FIterAcc[tid]/(6.0f*m);
+        }
+
+        // reset buffers
+        FIterAcc[tid] = glm::vec3(0.0);
+        vIterAcc[tid] = glm::vec3(0.0);
     }
 
 }
 
 
-class ExplicitSolver
+
+__global__ void initScheme(int maxTid, glm::vec3 *v, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc, int N)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+
+    if (tid < maxTid)
+    {       
+        v[tid] = glm::vec3(0.0);
+        FIter[tid] = glm::vec3(0.0);
+        vIterAcc[tid] = glm::vec3(0.0);
+        vIter[tid] = glm::vec3(0.0);
+        xIter[tid] = glm::vec3(0.0);
+        FIterAcc[tid] = glm::vec3(0.0);
+
+    }
+}
+
+struct SpringData
+{
+    
+    std::vector<glm::ivec2> structural;
+    std::vector<glm::ivec2> stretch;
+    std::vector<glm::ivec2> bend;
+    std::vector<glm::ivec2> bendDiag;
+
+    glm::ivec2 *structuralCuda;
+    glm::ivec2 *stretchCuda;
+    glm::ivec2 *bendCuda;
+    glm::ivec2 *bendDiagCuda;
+
+    int sqrtNStructural;
+    int sqrtNStretch;
+    int sqrtNBend;
+    int sqrtNBendDiag;
+};
+
+class ExplicitSolver: public Solver
 {
     private:
 
-    float h;
-    float L;
-    float k_s;
-    float k_d;
+    float m_L;
+    float m_stretch_L;
+    float m_bend_L;
+    float m_bendDiag_L;
 
-    glm::vec3 *f_i; // sum of internal forces for each particle
-    glm::vec3 *v_n; // current velocity for each particle
-    glm::vec3 *n_n; // current normal for each particle
-    float *m_i; // mass for each particle
+    float m_Ks;
+    float m_Kd;
+    float m_unitM;
+    glm::vec3 m_wind;
+    float *m_windUI;
+    float m_Ka;
+
+    int m_sqrtNRound;
+
+    // data structures
+    glm::vec3 *m_V; // current velocity for each particle
+    SpringData m_springs;
+
+    // RK4 buffers
+    glm::vec3 *m_xIter;
+    glm::vec3 *m_vIter;
+    glm::vec3 *m_vIterAcc;
+    glm::vec3 *m_FIter; // sum of forces for each particle
+    glm::vec3 *m_FIterAcc;
+
+    ExplicitSolver(const ExplicitSolver &other);
+    ExplicitSolver& operator=(const ExplicitSolver &other);
+
+    void fetchWind()
+    {
+        for (int i = 0; i<3; ++i)
+            m_wind[i] = m_windUI[i];
+    }
+
+    void initSprings(int N)
+    {
+        int N_minus_1 = N-1;
+        int N_minus_2 = N-2;
+
+        // filling the data structure going from squares of length=2
+        for (int j = 0; j <N; ++j)
+        {
+            for (int i = 0; i<N; ++i)
+            {
+                int id = j*N+i;
+
+                // add structural springs id & length
+                if (j < N_minus_1) m_springs.structural.push_back(glm::ivec2(id, id+N)); // right spring
+                if (i < N_minus_1) m_springs.structural.push_back(glm::ivec2(id, id+1)); // bottom spring
+
+                // add stretch springs id & length
+                if (i < N_minus_1 && j < N_minus_1) m_springs.stretch.push_back(glm::ivec2(id, id+N+1)); // 1st diag spring
+                if (i > 0 && j < N_minus_1) m_springs.stretch.push_back(glm::ivec2(id, id+N-1)); // 2nd diag spring
+
+                // adding bend springs
+                if (j < N_minus_2) m_springs.bend.push_back(glm::ivec2(id, id+2*N)); // right bend spring
+                if (i < N_minus_2) m_springs.bend.push_back(glm::ivec2(id, id+2)); // bottom bend spring
+
+                if (i < N_minus_2 && j < N_minus_2) m_springs.bendDiag.push_back(glm::ivec2(id, id + 2*N + 2)); // 1st diag bend spring
+                if (i > 1 && j < N_minus_2) m_springs.bendDiag.push_back(glm::ivec2(id, id+2*N-2)); // 2nd diag bend spring
+
+            }
+        }
+        cudaErrorCheck(cudaMalloc((void **) &m_springs.structuralCuda, sizeof(glm::ivec2)*m_springs.structural.size()));
+        cudaErrorCheck(cudaMemcpy(m_springs.structuralCuda, m_springs.structural.data(), sizeof(glm::ivec2)*m_springs.structural.size(), cudaMemcpyHostToDevice));
+
+        cudaErrorCheck(cudaMalloc((void **) &m_springs.stretchCuda, sizeof(glm::ivec2)*m_springs.stretch.size()));
+        cudaErrorCheck(cudaMemcpy(m_springs.stretchCuda, m_springs.stretch.data(), sizeof(glm::ivec2)*m_springs.stretch.size(), cudaMemcpyHostToDevice));
+
+        cudaErrorCheck(cudaMalloc((void **) &m_springs.bendCuda, sizeof(glm::ivec2)*m_springs.bend.size()));
+        cudaErrorCheck(cudaMemcpy(m_springs.bendCuda, m_springs.bend.data(), sizeof(glm::ivec2)*m_springs.bend.size(), cudaMemcpyHostToDevice));
+
+        cudaErrorCheck(cudaMalloc((void **) &m_springs.bendDiagCuda, sizeof(glm::ivec2)*m_springs.bendDiag.size()));
+        cudaErrorCheck(cudaMemcpy(m_springs.bendDiagCuda, m_springs.bendDiag.data(), sizeof(glm::ivec2)*m_springs.bendDiag.size(), cudaMemcpyHostToDevice));
+
+        m_springs.sqrtNBend = int(ceil(sqrt(m_springs.bend.size())));   
+        m_springs.sqrtNBendDiag = int(ceil(sqrt(m_springs.bendDiag.size())));   
+        m_springs.sqrtNStructural = int(ceil(sqrt(m_springs.structural.size())));   
+        m_springs.sqrtNStretch = int(ceil(sqrt(m_springs.stretch.size())));   
+    }
+
+    void updateSpringForces(Plane *grid)
+    {
+
+        // UPDATING STRUCTURAL SPRING FORCES
+
+        dim3 dimGridStructural((m_springs.sqrtNStructural+31)/32, (m_springs.sqrtNStructural+31)/32);
+        dim3 dimBlock1D(32, 32);
+        updateInternalForces<<<dimGridStructural, dimBlock1D>>>(m_springs.structural.size(), m_springs.sqrtNStructural, m_springs.structuralCuda, m_xIter, m_vIter, m_FIter, m_L, m_Ks, m_Kd);
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+        // UPDATING STRETCH SPRING FORCES
+
+        dim3 dimGridStretch((m_springs.sqrtNStretch+31)/32, (m_springs.sqrtNStretch+31)/32);
+
+        updateInternalForces<<<dimGridStretch, dimBlock1D>>>(m_springs.stretch.size(), m_springs.sqrtNStretch, m_springs.stretchCuda, m_xIter, m_vIter, m_FIter, m_stretch_L, m_Ks, m_Kd);
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+        // UPDATING BEND SPRING FORCES
+
+        dim3 dimGridBend((m_springs.sqrtNBend+31)/32, (m_springs.sqrtNBend+31)/32);
+
+        updateInternalForces<<<dimGridBend, dimBlock1D>>>(m_springs.bend.size(), m_springs.sqrtNBend, m_springs.bendCuda, m_xIter, m_vIter, m_FIter, m_bend_L, m_Ks, m_Kd);
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+        // UPDATING BEND DIAG SPRING FORCES
+
+        dim3 dimGridBendDiag((m_springs.sqrtNBendDiag+31)/32, (m_springs.sqrtNBendDiag+31)/32);
+
+        updateInternalForces<<<dimGridBendDiag, dimBlock1D>>>(m_springs.bendDiag.size(), m_springs.sqrtNBendDiag, m_springs.bendDiagCuda, m_xIter, m_vIter, m_FIter, m_bendDiag_L, m_Ks, m_Kd);
+        cudaErrorCheck(cudaDeviceSynchronize());
+        
+    }
+
+    void updateRK4(Plane *grid, float kOffset, float yOffset)
+    {
+
+        // INIT SUB ITERATION BUFFERS FOR POSITION AND VELOCITY (y = y + yOffset * k)
+
+        dim3 dimGridScheme((grid->N()+31)/32, (grid->N()+31)/32);
+        dim3 dimBlock(32, 32);
+
+        updateIterBuffers<<<dimGridScheme, dimBlock>>>(
+            grid->getVerticesNb(), 
+            grid->N(), 
+            kOffset, 
+            yOffset, 
+            (glm::vec3 *) grid->getDataPtr(0), 
+            m_V, 
+            m_xIter, 
+            m_vIter, 
+            m_FIter, 
+            m_vIterAcc, 
+            m_unitM
+            );
+
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+        updateSpringForces(grid);
+
+        fetchWind();
+
+        // Computing new positions with new internal forces
+        //float factor = 20.0f*glm::smoothstep(0.0f, 0.0f,sin(currentTime*0.4f));
+        float norm_wind_sq = glm::dot(m_wind,m_wind);
+        glm::vec3 normWind =  norm_wind_sq < 0.000001 ? m_wind : m_wind/sqrt(norm_wind_sq);
+
+        updateExternalForces<<<dimGridScheme, dimBlock>>>(
+            grid->getVerticesNb(), 
+            grid->N(),
+            kOffset, 
+            m_xIter, 
+            m_vIter, 
+            m_FIter, 
+            m_FIterAcc, 
+            (glm::vec3 *) grid->getDataPtr(1), 
+            m_unitM, 
+            m_wind, 
+            normWind, 
+            m_Ka
+            );
+        cudaErrorCheck(cudaDeviceSynchronize());
+    }
+
+    void runRK4Iterations(Plane *grid)
+    {
+
+        // compute k1, k2, k3 and k4 iterations of RK4 algorithm
+        float semiStep = m_timeStep*0.5;
+
+        updateRK4(grid, 1.0, 0.0);
+        updateRK4(grid, 2.0, semiStep);
+        updateRK4(grid, 2.0, semiStep);
+        updateRK4(grid, 1.0, m_timeStep);
+
+    }
 
     public:
 
-    ~ExplicitSolver()=default;
-
-    ExplicitSolver():k_d(0.0), k_s(0.0), h(0.1), L(1.0) {
+    ~ExplicitSolver()
+    {
+        cudaFree(m_xIter);
+        cudaFree(m_vIter);
+        cudaFree(m_vIterAcc);
+        cudaFree(m_FIter);
+        cudaFree(m_FIterAcc);
+        cudaFree(m_V);
     };
 
-
-    ExplicitSolver(Plane *grid, const float &m, const float &k_s, const float &k_d, const float &h, const float &L=1.0) : 
-    h(h), L(L), k_s(k_s), k_d(k_d)
+    float *Ks() {return &m_Ks;};
+    float *Kd() {return &m_Kd;};
+    float *Ka() {return &m_Ka;};
+    float *m() {return &m_unitM;};
+    float *L() {return &m_L;};
+    float *wind() 
     {
-        std::cout << "N = " << grid->N << " && NB DE PTS :" << grid->get_vertices_nb() << std::endl << std::flush ;
+        for (int i = 0; i<3; ++i)
+            m_windUI[i] = m_wind[i];
+        return m_windUI;
+    };
+    
 
+    ExplicitSolver(Plane *grid) : 
+    Solver(0.01f), m_L(1.0), m_Ks(2000.0), m_Kd(0.0), m_Ka(0.5), m_unitM(1.0), m_wind(glm::vec3(0.0f)), m_stretch_L(sqrt(2.0*m_L*m_L)), m_bend_L(2.0*m_L), m_bendDiag_L(2.0*m_stretch_L)
+    {
+        m_windUI = new float[3]; 
+        wind();
+        
+        std::cout << "N = " << grid->N() << " && NB DE PTS :" << grid->getVerticesNb() << std::endl << std::flush ;
+        std::cout << "LENGTH : (structural/stretch/bend/bendDiag)" << m_L << " " << m_stretch_L << " " << m_bend_L << " " << m_bendDiag_L << std::endl;
         
         // solver's buffers allocation
-        cudaErrorCheck(cudaMalloc((void **) &f_i, sizeof(glm::vec3)*grid->get_vertices_nb()));
-        cudaErrorCheck(cudaMalloc((void **) &v_n, sizeof(glm::vec3)*grid->get_vertices_nb()));
-        cudaErrorCheck(cudaMalloc((void **) &m_i, sizeof(float)*grid->get_vertices_nb()));
+        cudaErrorCheck(cudaMalloc((void **) &m_V, sizeof(glm::vec3)*grid->getVerticesNb()));
+        cudaErrorCheck(cudaMalloc((void **) &m_xIter, sizeof(glm::vec3)*grid->getVerticesNb()));
+        cudaErrorCheck(cudaMalloc((void **) &m_vIter, sizeof(glm::vec3)*grid->getVerticesNb()));
+        cudaErrorCheck(cudaMalloc((void **) &m_FIter, sizeof(glm::vec3)*grid->getVerticesNb()));
+        cudaErrorCheck(cudaMalloc((void **) &m_vIterAcc, sizeof(glm::vec3)*grid->getVerticesNb()));
+        cudaErrorCheck(cudaMalloc((void **) &m_FIterAcc, sizeof(glm::vec3)*grid->getVerticesNb()));
         
         // run cuda kernel
-        dim3 dim_grid((grid->N+31)/32, (grid->N+31)/32);
-        dim3 dim_block(32, 32);
+        dim3 dimGrid((grid->N()+31)/32, (grid->N()+31)/32);
+        dim3 dimBlock(32, 32);
 
-        init_scheme<<<dim_grid, dim_block>>>(v_n,  (glm::vec3 *) grid->get_dptr(1), m_i, grid->N, m);
+        initScheme<<<dimGrid, dimBlock>>>(
+            grid->getVerticesNb(), 
+            m_V, 
+            m_xIter, 
+            m_vIter, 
+            m_FIter, 
+            m_vIterAcc, 
+            m_FIterAcc, 
+            grid->N()
+            );
         cudaErrorCheck(cudaDeviceSynchronize());
 
+        // init spring data structure
+        initSprings(grid->N());
+    };  
 
-    };
 
-    void step(Plane *grid, float time)
+
+    void step(Plane *grid)
     {
-        // run cuda kernel
-        dim3 dim_grid((grid->N+31)/32, (grid->N+31)/32);
-        dim3 dim_block(32, 32);
 
+        runRK4Iterations(grid);
 
-        // Computing internal forces FIRST
-        update_internal_forces<<<dim_grid, dim_block>>>(f_i, (glm::vec3 *) grid->get_dptr(0), v_n,  (glm::vec3 *) grid->get_dptr(1), m_i, h, L, k_s, k_d, grid->N);
+        dim3 dimGrid((grid->N()+31)/32, (grid->N()+31)/32);
+        dim3 dimBlock(32, 32);
+        updateScheme<<<dimGrid, dimBlock>>>(
+            grid->getVerticesNb(), 
+            grid->N(),
+            (glm::vec3 *) grid->getDataPtr(0), 
+            m_V,
+            m_vIterAcc, 
+            m_FIterAcc, 
+            m_timeStep, 
+            m_unitM
+            );
         cudaErrorCheck(cudaDeviceSynchronize());
-        
-        // Computing new positions with new internal forces
-        float factor = 20.0f*glm::smoothstep(0.0f, 0.7f,sin(time*0.4f));
-        update_positions_scheme<<<dim_grid, dim_block>>>(f_i, (glm::vec3 *) grid->get_dptr(0), v_n,  (glm::vec3 *) grid->get_dptr(1), m_i, h, grid->N, glm::vec3(factor, 0.0, factor), time);
-        cudaErrorCheck(cudaDeviceSynchronize());
+
     };
+
+
 
 };
 

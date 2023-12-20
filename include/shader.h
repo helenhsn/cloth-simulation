@@ -14,29 +14,29 @@ class ShaderProgram
 public:
     unsigned int glid;
 
-    ShaderProgram(const char* vertex_path, const char* fragment_path)
+    ShaderProgram(const char* vertexPath, const char* fragmentPath)
     {
-        std::string vs_code;
-        std::string fs_code;
-        std::ifstream vs_file;
-        std::ifstream fs_file;
-        vs_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        fs_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+        std::string vsCode;
+        std::string fsCode;
+        std::ifstream vsFile;
+        std::ifstream fsFile;
+        vsFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+        fsFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
         try 
         {
             // open files
-            vs_file.open(vertex_path);
-            fs_file.open(fragment_path);
-            std::stringstream vs_stream, fs_stream;
+            vsFile.open(vertexPath);
+            fsFile.open(fragmentPath);
+            std::stringstream vsStream, fsStream;
             // read file's buffer contents into streams
-            vs_stream << vs_file.rdbuf();
-            fs_stream << fs_file.rdbuf();	
+            vsStream << vsFile.rdbuf();
+            fsStream << fsFile.rdbuf();	
             // close file handlers
-            vs_file.close();
-            fs_file.close();
+            vsFile.close();
+            fsFile.close();
             // convert stream into string
-            vs_code = vs_stream.str();
-            fs_code = fs_stream.str();
+            vsCode = vsStream.str();
+            fsCode = fsStream.str();
         }
         catch (std::ifstream::failure& e)
         {
@@ -46,8 +46,8 @@ public:
 
         std::string test1 = "#version 330 core \nlayout (location = 0) in vec3 pos; \nuniform mat4 perspective;\nuniform mat4 view; \nvoid main(){gl_Position = perspective*view*vec4(pos, 1.0);}";
         std::string test2 = "#version 330 core\nout vec4 fragCol; \nvoid main(){fragCol = vec4(1.0);}";
-        const char *vShaderCode = vs_code.c_str();
-        const char *fShaderCode = fs_code.c_str();
+        const char *vShaderCode = vsCode.c_str();
+        const char *fShaderCode = fsCode.c_str();
 
         // 2. compile shaders
         unsigned int vertex, fragment;
@@ -111,15 +111,20 @@ private:
     void check_compile_errors(GLuint shader, std::string type)
     {
         GLint success;
-        GLchar infoLog[1024];
         if(type != "PROGRAM")
         {
             glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
             if(!success)
             {
-                glGetShaderInfoLog(shader, 1024, NULL, infoLog);
-                std::cout << "COMPILING SHADER FAILED! ERROR type: " << type << "\n" << infoLog << "\n ---- " << std::endl;
-                exit(0);
+                int infoLength;
+                glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLength);
+
+                GLchar *log = new char[infoLength];
+                glGetShaderInfoLog(shader, infoLength, NULL, log);
+
+                std::cout << "COMPILING SHADER FAILED! ERROR type: " << type << "\n" << log << "\n ---- " << std::endl;
+                delete[] log;
+
             }
         }
         else
@@ -127,9 +132,14 @@ private:
             glGetProgramiv(shader, GL_LINK_STATUS, &success);
             if(!success)
             {
-                glGetProgramInfoLog(shader, 1024, NULL, infoLog);
-                std::cout << "LINKING PROGRAM FAILED! of type: " << type << "\n" << infoLog << "\n ---- " << std::endl;
-                exit(0);
+                int infoLength;
+                glGetProgramiv(shader, GL_INFO_LOG_LENGTH, &infoLength);
+
+                GLchar *log = new char[infoLength];
+                glGetProgramInfoLog(shader, infoLength, NULL, log);
+                std::cout << "LINKING PROGRAM FAILED! of type: " << type << "\n" << log << "\n ---- " << std::endl;
+
+                delete[] log;
             }
         }
     }

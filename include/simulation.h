@@ -15,22 +15,39 @@ enum SOLVER_TYPE
 class Simulation
 {
     private:
-    Plane *grid; // cloth
-    ExplicitSolver solver;
+    Plane *m_grid; // cloth
+    std::vector<Mesh *> m_colliders;
+
+    ExplicitSolver *m_solver;
+    int m_nbSubSteps;
 
     public:
-    Simulation(Plane *grid, float m=2.0, float k_s=2900.0, float k_d=0.5, float h=0.005): grid(grid)
+    Simulation(Plane *grid)
+    : m_grid(grid), m_nbSubSteps(5)
     {
-        grid->bind_cuda_data();
-        solver = ExplicitSolver(grid, m, k_s, k_d, h);
-        grid->unbind_cuda_data();
+        m_grid->bindCudaData();
+        m_solver = new ExplicitSolver(grid);
+        m_grid->unbindCudaData();
+    };
+
+    void addCollider(Mesh *collider)
+    {
+        m_colliders.push_back(collider);
+    };
+    int *nbSubSteps() {return &m_nbSubSteps;};
+
+    ~Simulation()
+    {
+        // free solver ?
     }
 
-    void run(float time)
+    void run(float currentTime)
     {   
-        grid->bind_cuda_data();
-        for (int i=0; i<50; i++) solver.step(grid, time);
-        grid->unbind_cuda_data();
+        m_grid->bindCudaData();
+        for (int i=0; i<m_nbSubSteps; i++) m_solver->step(m_grid);
+        m_grid->unbindCudaData();
     }
+
+    Solver *solver() {return m_solver;};
 };
 #endif

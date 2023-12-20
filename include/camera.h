@@ -19,8 +19,8 @@ enum Camera_Movement {
 
 // Default camera values
 const float YAW         = -90.0f;
-const float PITCH       =  0.0f;
-const float SPEED       =  150.0f;
+const float PITCH       = 0.0f;
+const float SPEED       =  200.0f;
 const float SENSITIVITY =  0.10f;
 const float ZOOM        =  30.0f;
 
@@ -29,87 +29,102 @@ const float ZOOM        =  30.0f;
 class Camera
 {
 public:
-    // camera Attributes
-    glm::vec3 Position;
-    glm::vec3 Front;
-    glm::vec3 Up;
-    glm::vec3 Right;
-    glm::vec3 WorldUp;
-    // euler Angles
-    float Yaw;
-    float Pitch;
-    // camera options
-    float MovementSpeed;
-    float MouseSensitivity;
-    float Zoom;
 
     // constructor with vectors
-    Camera(glm::vec3 position = glm::vec3(0.0, 0.0, 0.0), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = YAW, float pitch = PITCH) : Front(glm::vec3(0.0f, 0.0f, -1.0f)), MovementSpeed(SPEED), MouseSensitivity(SENSITIVITY), Zoom(ZOOM)
+    Camera(glm::vec3 pos = glm::vec3(0.0, 0.0, 0.0), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = YAW, float pitch = PITCH) : m_front(glm::vec3(0.0f, 0.0f, -1.0f)), m_transSpeed(SPEED), m_rotSpeed(SENSITIVITY), m_zoom(ZOOM)
     {
-        Position = position;
-        WorldUp = up;
-        Yaw = yaw;
-        Pitch = pitch;
+        m_pos = pos;
+        m_worldUp = up;
+        m_yaw = yaw;
+        m_pitch = pitch;
         updateCameraVectors();
     }
 
     // returns the view matrix calculated using Euler Angles and the LookAt Matrix
-    glm::mat4 GetViewMatrix()
+    glm::mat4 viewMatrix()
     {
-        return glm::lookAt(Position, Position + Front, Up);
+        return glm::lookAt(m_pos, m_pos + m_front, m_up);
+    }
+
+    glm::mat4 projectionMatrix(float &windowWidth, float &windowHeight)
+    {
+        return glm::perspective(glm::radians(m_zoom), windowWidth / windowHeight, 0.1f, 10000.0f);
     }
 
     // processes input received from any keyboard-like input system. Accepts input parameter in the form of camera defined ENUM (to abstract it from windowing systems)
-    void ProcessKeyboard(Camera_Movement direction, float deltaTime)
+    void processTranslation(Camera_Movement direction, float deltaTime)
     {
-        float velocity = MovementSpeed * deltaTime;
-        if (direction == FORWARD)
-            Position += Front * velocity;
-        if (direction == BACKWARD)
-            Position -= Front * velocity;
-        if (direction == LEFT)
-            Position -= Right * velocity;
-        if (direction == RIGHT)
-            Position += Right * velocity;
-        if (direction == UP)
-            Position += Up * velocity;
+        float velocity = m_transSpeed * deltaTime;
+        switch(direction)
+        {
+            case Camera_Movement::FORWARD:
+                m_pos += m_front * velocity;
+                break;
+            case Camera_Movement::BACKWARD:
+                m_pos -= m_front * velocity;
+                break;
+            case Camera_Movement::LEFT:
+                m_pos -= m_right * velocity;
+                break;
+            case Camera_Movement::RIGHT:
+                m_pos += m_right * velocity;
+                break;
+            case Camera_Movement::UP:
+                m_pos += m_up * velocity;
+                break;
+        }
+
     }
 
     // processes input received from a mouse input system. Expects the offset value in both the x and y direction.
-    void ProcessMouseMovement(float xoffset, float yoffset, GLboolean constrainPitch = true)
+    void processRotation(float xoffset, float yoffset, GLboolean constrainPitch = true)
     {
-        xoffset *= MouseSensitivity;
-        yoffset *= MouseSensitivity;
+        xoffset *= m_rotSpeed;
+        yoffset *= m_rotSpeed;
 
-        Yaw   += xoffset;
-        Pitch += yoffset;
+        m_yaw   += xoffset;
+        m_pitch += yoffset;
 
         // make sure that when pitch is out of bounds, screen doesn't get flipped
         if (constrainPitch)
         {
-            if (Pitch > 89.0f)
-                Pitch = 89.0f;
-            if (Pitch < -89.0f)
-                Pitch = -89.0f;
+            if (m_pitch > 89.0f)
+                m_pitch = 89.0f;
+            if (m_pitch < -89.0f)
+                m_pitch = -89.0f;
         }
 
-        // update Front, Right and Up Vectors using the updated Euler angles
+        // update m_front, m_right and m_up Vectors using the updated Euler angles
         updateCameraVectors();
     }
 
 private:
-    // calculates the front vector from the Camera's (updated) Euler Angles
+    // camera Attributes
+    glm::vec3 m_pos;
+    glm::vec3 m_front;
+    glm::vec3 m_up;
+    glm::vec3 m_right;
+    glm::vec3 m_worldUp;
+    // euler Angles
+    float m_yaw;
+    float m_pitch;
+    // camera options
+    float m_transSpeed;
+    float m_rotSpeed;
+    float m_zoom;
+    // calculates the m_front vector from the Camera's (updated) Euler Angles
     void updateCameraVectors()
     {
-        // calculate the new Front vector
+        // calculate the new m_front vector
         glm::vec3 front;
-        front.x = cos(glm::radians(Yaw)) * cos(glm::radians(Pitch));
-        front.y = sin(glm::radians(Pitch));
-        front.z = sin(glm::radians(Yaw)) * cos(glm::radians(Pitch));
-        Front = glm::normalize(front);
-        // also re-calculate the Right and Up vector
-        Right = glm::normalize(glm::cross(Front, WorldUp));  // normalize the vectors, because their length gets closer to 0 the more you look up or down which results in slower movement.
-        Up    = glm::normalize(glm::cross(Right, Front));
+        float cosPitch = cos(glm::radians(m_pitch));
+        front.x = cos(glm::radians(m_yaw)) * cosPitch;
+        front.y = sin(glm::radians(m_pitch));
+        front.z = sin(glm::radians(m_yaw)) * cosPitch;
+        m_front = glm::normalize(front);
+        // also re-calculate the m_right and m_up vector
+        m_right = glm::normalize(glm::cross(m_front, m_worldUp));  // normalize the vectors, because their length gets closer to 0 the more you look m_up or down which results in slower movement.
+        m_up    = glm::normalize(glm::cross(m_right, m_front));
     }
 };
 #endif

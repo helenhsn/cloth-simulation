@@ -2,24 +2,34 @@
 #include "../include/mesh.hcu"
 #include "../include/camera.h"
 #include "../include/simulation.h"
-#include <GLFW/glfw3.h>
+#include "../include/ui.h"
 #include <iostream>
 
 using namespace std;
-const unsigned int w_height = 1000;
-const unsigned int w_width = 1000;
+float w_height = 1000.0;
+float w_width = 1200.0;
 float lastX;
 float lastY;
 bool firstMouse = true;
 
 // callbacks
-void window_resize_callback(GLFWwindow *window, int width, int height);
-void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+void windowResizeCallback(GLFWwindow *window, int width, int height);
+void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 void keyboard_callback(GLFWwindow *window);
+
+void printMat4(const glm::mat4& matrix) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            std::cout << matrix[i][j] << "\t";
+        }
+        std::cout << std::endl;
+    }
+}
+
 
 
 //Camera camera(glm::vec3(21.8819, 20.3187, 83.4559));
-Camera camera(glm::vec3(70.8819, 20.3187, 900.0));
+Camera camera(glm::vec3(100.0, 200., 700.0));
 
 float dt = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;
@@ -32,7 +42,7 @@ int main()
         glfwTerminate();
         return -1;
     }
-    GLFWwindow *window = glfwCreateWindow(w_width, w_height, "Cloth Simulation", 0, nullptr);
+    GLFWwindow *window = glfwCreateWindow(static_cast<int>(w_width), static_cast<int>(w_height), "Cloth Simulation", 0, nullptr);
     if(!window)
     {
         std::cout << "Failed to create GLFW window!" << std::endl;
@@ -40,8 +50,8 @@ int main()
         return -1;
     }
     glfwMakeContextCurrent(window);
-    glfwSetFramebufferSizeCallback(window, window_resize_callback);
-    glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetFramebufferSizeCallback(window, windowResizeCallback);
+    glfwSetCursorPosCallback(window, mouseCallback);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
@@ -63,14 +73,23 @@ int main()
         return -1;
     }
 
-    // setting up simulation
 
-    int N = 128;
-    ShaderProgram sphere_pgrm("shaders/cloth.vs", "shaders/cloth.fs");
-    ShaderProgram cloth_pgrm("shaders/cloth.vs", "shaders/cloth.fs");
-    Plane *grid = new Plane(cloth_pgrm, N);
-    Sphere *sphere = new Sphere(sphere_pgrm, 10.0f, 50, 50);
-    Simulation sim(grid);
+    // setting simulation objects (drawables)
+    ShaderProgram ground_pgrm("../shaders/ground.vs", "../shaders/ground.fs");
+    ShaderProgram sphere_pgrm("../shaders/sphere.vs", "../shaders/sphere.fs");
+    ShaderProgram cloth_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
+
+    Plane *grid = new Plane(cloth_pgrm);
+    Plane *ground = new Plane(ground_pgrm, 500, {false, false, false});
+    ground->setPrimOpenGL(GL_LINES);
+    Sphere *sphere = new Sphere(sphere_pgrm);
+    Simulation *sim = new Simulation(grid);
+    sim->addCollider(sphere);
+
+    // Init GUI (imgui window)
+    GUI *gui = new GUI(window); 
+
+    
 
     // Rendering options
     glEnable(GL_DEPTH_TEST);
@@ -82,6 +101,8 @@ int main()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glClearColor(0.0, 0.0, 0.0, 1.0);
 
+        gui->initNewFrame();
+
         float currentFrame = static_cast<float>(glfwGetTime());
         dt = currentFrame - lastFrame;
         lastFrame = currentFrame;
@@ -89,64 +110,83 @@ int main()
         keyboard_callback(window);
 
         // run simulation 
-        sim.run(currentFrame);
+        sim->run(currentFrame);
 
-        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)w_width / (float)w_height, 0.1f, 100000.0f);
-        glm::mat4 view = camera.GetViewMatrix();
-        //glm::mat4 model = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        glm::mat4 model = glm::mat4(1.0f);
+        // camera matrices
+        glm::mat4 projection = camera.projectionMatrix(w_width, w_height);
+        glm::mat4 view = camera.viewMatrix();
+
         sphere_pgrm.use();
         sphere_pgrm.setMat4("projection", projection);
         sphere_pgrm.setMat4("view", view);
-        //pgrm.setMat4("model", glm::rotate(model, 0.0f, glm::vec3(0.0, 1.0, 0.0)));
-        sphere_pgrm.setMat4("model", glm::scale(model, glm::vec3(2.0f)));
+        glm::mat4 model = glm::scale(glm::mat4(1.0f), glm::vec3(5.0f));        
+        sphere_pgrm.setMat4("model", model);
+        glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
+        sphere->draw();
+
+        ground_pgrm.use();
+        ground_pgrm.setMat4("projection", projection);
+        ground_pgrm.setMat4("view", view);
+        model = glm::scale(glm::mat4(1.0f), 25.0f*glm::vec3(1.0f, 0.0f, 1.0f));
+        model = glm::translate(model, -250.0f*glm::vec3(1.0f, 0.0f, 1.0f));
+        ground_pgrm.setMat4("model", model);
+        glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
+        ground->draw(); 
 
         cloth_pgrm.use();
         cloth_pgrm.setMat4("projection", projection);
         cloth_pgrm.setMat4("view", view);
-        //pgrm.setMat4("model", glm::rotate(model, 0.0f, glm::vec3(0.0, 1.0, 0.0)));
-        cloth_pgrm.setMat4("model", glm::scale(model, glm::vec3(2.0f)));
+        model = glm::scale(glm::mat4(1.0), glm::vec3(2.0f));
+        model = glm::translate(model, glm::vec3(0.0f, 100.0f, 0.0f));
+        cloth_pgrm.setMat4("model", model);
 
         glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
         grid->draw();
-        glPolygonMode(GL_FRONT_AND_BACK,  GL_FILL);
-        sphere->draw();
+
+        gui->buildWindow(sim, grid); // TODO delete cast when implementing Implicit Solver <!>
+        gui->render();
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-
     glfwTerminate();
     return 0;
 
 }
 
-void window_resize_callback(GLFWwindow *window, int width, int height)
+void windowResizeCallback(GLFWwindow *window, int width, int height)
 {
     glViewport(0, 0, width, height);
 } 
 
 // -------------------------------------------------------
-void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
+void mouseCallback(GLFWwindow* window, double xposIn, double yposIn)
 {
-    float xpos = static_cast<float>(xposIn);
-    float ypos = static_cast<float>(yposIn);
-
-    if (firstMouse)
+    int status = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+    if (status == GLFW_PRESS)
     {
+        float xpos = static_cast<float>(xposIn);
+        float ypos = static_cast<float>(yposIn);
+
+        if (firstMouse)
+        {
+            lastX = xpos;
+            lastY = ypos;
+            firstMouse = false;
+            return;
+        }
+
+        float offsetX = xpos - lastX;
+        float offsetY = lastY - ypos;
+
         lastX = xpos;
         lastY = ypos;
-        firstMouse = false;
-        return;
+
+        camera.processRotation(offsetX, offsetY);
     }
 
-    float xoffset = xpos - lastX;
-    float yoffset = lastY - ypos;
+    else if (status == GLFW_RELEASE) firstMouse = true;
 
-    lastX = xpos;
-    lastY = ypos;
-
-    camera.ProcessMouseMovement(xoffset, yoffset);
 }
 
 void keyboard_callback(GLFWwindow *window)
@@ -155,13 +195,13 @@ void keyboard_callback(GLFWwindow *window)
         glfwSetWindowShouldClose(window, true);
 
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        camera.ProcessKeyboard(FORWARD, dt);
+        camera.processTranslation(Camera_Movement::FORWARD, dt);
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        camera.ProcessKeyboard(BACKWARD, dt);
+        camera.processTranslation(Camera_Movement::BACKWARD, dt);
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        camera.ProcessKeyboard(LEFT, dt);
+        camera.processTranslation(Camera_Movement::LEFT, dt);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        camera.ProcessKeyboard(RIGHT, dt);
+        camera.processTranslation(Camera_Movement::RIGHT, dt);
      if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-        camera.ProcessKeyboard(UP, dt);
+        camera.processTranslation(Camera_Movement::UP, dt);
 }

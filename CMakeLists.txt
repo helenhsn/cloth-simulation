@@ -29,7 +29,7 @@ set(CUDA_SEPARABLE_COMPILATION ON) # Allow multiple CUDA files compilation
 set (PROJECT_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/include")
 set (PROJECT_SRC_DIR      "${PROJECT_SOURCE_DIR}/src")
 
-file(GLOB_RECURSE SOURCES "${PROJECT_SRC_DIR}/*.cpp" "${PROJECT_SRC_DIR}/*.c" "${GLAD_SRC_DIR}/*.c" "${IMGUI_SRC_DIR}/*.c")
+file(GLOB_RECURSE SOURCES "${PROJECT_SRC_DIR}/*.cpp" "${PROJECT_SRC_DIR}/*.c" "${GLAD_SRC_DIR}/*.c" "${IMGUI_SRC_DIR}/*.cpp")
 file(GLOB_RECURSE SOURCES_CUDA "${PROJECT_SRC_DIR}/*.cu" "${PROJECT_INCLUDE_DIRS}/*.hcu")
 
 include_directories(${CUDA_INCLUDE_DIRS})

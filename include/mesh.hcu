@@ -21,134 +21,142 @@ class Mesh
 {
 
 private:
-    GLuint glid_;
-    GLuint vao_ = 0;
-    GLuint vbo_[3];
-    GLuint ebo_ = 0;
+    GLuint m_glid;
+    GLuint m_VAO = 0;
+    GLuint m_VBOs[3];
+    GLuint m_EBO = 0;
 
-    int nb_vbos_cuda_ = 0;
-    float **d_vbos_ptr_;
-    cudaGraphicsResource_t *cuda_res_vbos; // Cuda ptr that will point to OpenGL's VBOs
+    int m_nbCudaVBOs = 0;
+    float **m_dataPtrVBOs;
+    cudaGraphicsResource_t *m_cudaResVBOs; // Cuda ptr that will point to OpenGL's VBOs
     
-    int nb_vertices_;
-    int nb_indices_;
+    int m_VerticesNb;
+    int m_IndicesNb;
+
+    GLenum m_primOpenGL;
+
+    Data m_data; // stocking data to reset mesh when needed
     
 
 public:
     Mesh()=default;
-    Mesh(ShaderProgram pgrm, const Data &data, std::vector<bool> shared_cuda): glid_(pgrm.glid), nb_vbos_cuda_(shared_cuda.size())
+    Mesh(ShaderProgram pgrm, const Data &data, std::vector<bool> isCudaShared, GLenum prim = GL_TRIANGLES): m_data(data), m_glid(pgrm.glid), m_nbCudaVBOs(isCudaShared.size()), m_primOpenGL(prim)
     {
 
-        nb_vertices_ = data.vertices.size();
-        nb_indices_ = data.indices.size();
 
-        glGenVertexArrays(1, &vao_);
-        glBindVertexArray(vao_);
+        m_VerticesNb = data.vertices.size();
+        m_IndicesNb = data.indices.size();
+
+        glGenVertexArrays(1, &m_VAO);
+        glBindVertexArray(m_VAO);
 
         ///////////////// VERTICES INITITIALIZATION /////////////////
-        glGenBuffers(1, &vbo_[0]);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_[0]);
+        glGenBuffers(1, &m_VBOs[0]);
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[0]);
         glBufferData(GL_ARRAY_BUFFER, data.vertices.size()*sizeof(glm::vec3), data.vertices.data(), GL_STATIC_DRAW);
         
         GLint loc = glGetAttribLocation(pgrm.glid, "pos");
         if (loc < 0) 
         {
-            std::cout << "Vertices attrib not found in shader!" << std::endl;
+            std::cout << "Vertices attrib not found in shader : " << pgrm.glid << std::endl;
         }
         glEnableVertexAttribArray(loc);
         glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
         
         ///////////////// NORMALS INITITIALIZATION /////////////////
-        glGenBuffers(1, &vbo_[1]);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_[1]);
+        glGenBuffers(1, &m_VBOs[1]);
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[1]);
         glBufferData(GL_ARRAY_BUFFER, data.normals.size()*sizeof(glm::vec3), data.normals.data(), GL_STATIC_DRAW);
         
         loc = glGetAttribLocation(pgrm.glid, "n");
         if (loc < 0) 
         {
-            std::cout << "Normal attrib not found in shader!" << std::endl;
+            std::cout << "Normal attrib not found in shader : "  << pgrm.glid << std::endl;
         }
         glEnableVertexAttribArray(loc);
         glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
         
         ///////////////// UV INITITIALIZATION /////////////////
-        glGenBuffers(1, &vbo_[2]);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo_[2]);
+        glGenBuffers(1, &m_VBOs[2]);
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[2]);
         glBufferData(GL_ARRAY_BUFFER, data.uv.size()*sizeof(glm::vec2), data.uv.data(), GL_STATIC_DRAW);
         
         loc = glGetAttribLocation(pgrm.glid, "uv");
         if (loc < 0) 
         {
-            std::cout << "UV attrib not found in shader!" << std::endl;
+            std::cout << "UV attrib not found in shader : " << pgrm.glid << std::endl;
         }
         glEnableVertexAttribArray(loc);
         glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void *)0);
 
 
         ///////////////// REGISTERING VERTICES VBO WITH CUDA <!> /////////////////
-        cuda_res_vbos = new cudaGraphicsResource_t[nb_vbos_cuda_];
-        d_vbos_ptr_ = new float*[nb_vbos_cuda_];
+        m_cudaResVBOs = new cudaGraphicsResource_t[m_nbCudaVBOs];
+        m_dataPtrVBOs = new float*[m_nbCudaVBOs];
         
         for (int i = 0; i<3; i++)
         {
-            d_vbos_ptr_[i] = nullptr;
-            cuda_res_vbos[i] = nullptr;
-            if (shared_cuda[i])
-                cudaErrorCheck(cudaGraphicsGLRegisterBuffer(&cuda_res_vbos[i], vbo_[i], cudaGraphicsMapFlagsNone));
+            m_dataPtrVBOs[i] = nullptr;
+            m_cudaResVBOs[i] = nullptr;
+            if (isCudaShared[i])
+                cudaErrorCheck(cudaGraphicsGLRegisterBuffer(&m_cudaResVBOs[i], m_VBOs[i], cudaGraphicsMapFlagsNone));
         }
 
         // EBO
-        glGenBuffers(1, &ebo_);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_);
+        glGenBuffers(1, &m_EBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, data.indices.size()*sizeof(GLuint), data.indices.data(), GL_STATIC_DRAW);
     };
 
     ~Mesh() 
     {
-        glDeleteVertexArrays(1, &vao_);
-        vao_ = 0;
+        glDeleteVertexArrays(1, &m_VAO);
+        m_VAO = 0;
         for (int i =0; i<3; i++)
         {
-            if (cuda_res_vbos[i]) 
+            if (m_cudaResVBOs[i]) 
             {
-                cudaErrorCheck(cudaGraphicsUnregisterResource(cuda_res_vbos[i]));
+                cudaErrorCheck(cudaGraphicsUnregisterResource(m_cudaResVBOs[i]));
             }
-            glDeleteBuffers(1, &vbo_[i]);
-            vbo_[i] = 0;
+            glDeleteBuffers(1, &m_VBOs[i]);
+            m_VBOs[i] = 0;
         }
-        glDeleteBuffers(1, &ebo_);
-        ebo_ = 0;
+        glDeleteBuffers(1, &m_EBO);
+        m_EBO = 0;
     };
 
     virtual void draw()
     {
-        glBindVertexArray(vao_);
-        glDrawElements(GL_TRIANGLES,  nb_indices_, GL_UNSIGNED_INT, 0);
+        
+        glBindVertexArray(m_VAO);
+        glDrawElements(m_primOpenGL,  m_IndicesNb, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     };
 
-    void bind_cuda_data()
+    void bindCudaData()
     {
-        for (int i=0; i<nb_vbos_cuda_; i++)
+        for (int i=0; i<m_nbCudaVBOs; i++)
         {
-            if (cuda_res_vbos[i]) bindBuffer(d_vbos_ptr_[i], cuda_res_vbos[i]);
+            if (m_cudaResVBOs[i]) bindBuffer(m_dataPtrVBOs[i], m_cudaResVBOs[i]);
         }
     };
 
-    void unbind_cuda_data()
+    void unbindCudaData()
     {
-        for (int i=0; i<nb_vbos_cuda_; i++)
+        for (int i=0; i<m_nbCudaVBOs; i++)
         {
-            if (cuda_res_vbos[i]) unbindBuffer(cuda_res_vbos[i]);
+            if (m_cudaResVBOs[i]) unbindBuffer(m_cudaResVBOs[i]);
         }
     };
 
-    float *get_dptr(int i)
+    float *getDataPtr(int i)
     {
-        return d_vbos_ptr_[i];
+        return m_dataPtrVBOs[i];
     };
 
-    int get_vertices_nb() {return nb_vertices_;};
+    int getVerticesNb() {return m_VerticesNb;};
+
+    void setPrimOpenGL(GLenum prim) { m_primOpenGL = prim; };
 };
 
 
@@ -156,12 +164,10 @@ class Plane: public Mesh
 {
 
     public:
-    unsigned int N;
-    Plane(ShaderProgram pgrm, int &size_edge): Mesh(pgrm, Plane::init_mesh(size_edge), {true, true, false}), N(size_edge)
+    Plane(ShaderProgram pgrm, int size_edge=128, std::vector<bool> shared = {true, true, false}): Mesh(pgrm, Plane::init_mesh(size_edge), shared), m_N(size_edge)
     {}
 
     static Data init_mesh(int &N_) {
-        std::cout << "fille" << std::endl << std::flush;
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec2> uv;
@@ -204,15 +210,25 @@ class Plane: public Mesh
         Data new_data = {vertices, normals, uv, indices}; 
         return new_data;
     };
+
+    unsigned int N() {return m_N;};
+
+    unsigned int *ptrN() {return &m_N;};
+
+    private:
+    unsigned int m_N;
 };
 
 class Sphere : public Mesh 
 {
     private:
-    float radius_;
+    float m_radius;
+
     public:
 
-    Sphere(ShaderProgram pgrm, float radius, int row_count, int column_count): Mesh(pgrm, Sphere::init_mesh(radius, row_count, column_count), {true, false, false}), radius_(radius)
+    Sphere(ShaderProgram pgrm, std::vector<bool> shared = {true, false, false}): 
+    Mesh(pgrm, Sphere::init_mesh(), shared), 
+    m_radius(10.0f)
     {}
     
     static glm::vec3 spherical_coords(float &r, float &th, float &phi)
@@ -222,26 +238,31 @@ class Sphere : public Mesh
         return glm::vec3(r*cos_phi*cos(th), r*sin(phi), r*cos_phi*sin(th));
     }
 
-    static Data init_mesh(float &r, int &row_count, int &column_count)
+    float radius() {return m_radius;};
+
+    static Data init_mesh()
     {
+        float r = 10.0f;
+        int rowCount = 50;
+        int columnCount = 50;
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec2> uv;
         std::vector<GLuint> indices;
         float PI = 3.14159265;
-        float ratio_row  = PI/row_count;
-        float ratio_column = 2.0*PI/column_count;
+        float ratio_row  = PI/rowCount;
+        float ratio_column = 2.0*PI/columnCount;
 
         float phi = PI/2.0;
         float th = 0.0;
 
 
         
-        for (int i=0; i<row_count-1; i++)
+        for (int i=0; i<rowCount-1; i++)
         {
             phi -=ratio_row;
 
-            for (int j = 0; j<column_count; j++)
+            for (int j = 0; j<columnCount; j++)
             {
                 // inserting each vertex one time
                 vertices.push_back(Sphere::spherical_coords(r, th, phi));
@@ -257,15 +278,15 @@ class Sphere : public Mesh
         // top and bottom single triangles
         int top_vtx = vertices.size() - 1;
         int bottom_vtx = vertices.size() - 2;
-        int b_idx = bottom_vtx - column_count;
-        int modulo = (column_count-1)*(column_count-1);
-        for (int k = 0; k<column_count; k++)
+        int b_idx = bottom_vtx - columnCount;
+        int modulo = (columnCount-1)*(columnCount-1);
+        for (int k = 0; k<columnCount; k++)
         {
-            indices.push_back((k+1)%column_count);
+            indices.push_back((k+1)%columnCount);
             indices.push_back(k);
             indices.push_back(top_vtx);
 
-            if (k== (column_count - 1)) indices.push_back(bottom_vtx - column_count);
+            if (k== (columnCount - 1)) indices.push_back(bottom_vtx - columnCount);
             else indices.push_back(b_idx+1);
             indices.push_back(bottom_vtx);
             indices.push_back(b_idx);
@@ -273,20 +294,20 @@ class Sphere : public Mesh
         }
 
         // stack triangles
-        for (int i = 0; i<row_count-2; i++)
+        for (int i = 0; i<rowCount-2; i++)
         {
-            for (int j = 0.0; j<column_count; j++)
+            for (int j = 0.0; j<columnCount; j++)
             {
-                int idx = i*column_count+j; // vertex (i, j)
-                if (j==(column_count-1)) indices.push_back(idx+1-column_count);
+                int idx = i*columnCount+j; // vertex (i, j)
+                if (j==(columnCount-1)) indices.push_back(idx+1-columnCount);
                 else indices.push_back(idx+1);
-                indices.push_back(idx+column_count);
+                indices.push_back(idx+columnCount);
                 indices.push_back(idx);
 
-                if (j==(column_count-1)) indices.push_back(idx+1);
-                else indices.push_back(idx + column_count+1);
-                indices.push_back(idx+column_count);
-                if (j==(column_count-1)) indices.push_back(idx+1-column_count);
+                if (j==(columnCount-1)) indices.push_back(idx+1);
+                else indices.push_back(idx + columnCount+1);
+                indices.push_back(idx+columnCount);
+                if (j==(columnCount-1)) indices.push_back(idx+1-columnCount);
                 else indices.push_back(idx+1);
             }
         }

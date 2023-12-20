@@ -7,5 +7,5 @@ out vec4 fragCol;
 
 void main()
 {
-    fragCol = vec4(p_normal, 1.0);
+    fragCol = vec4(abs(p_normal), 1.0);
 }
