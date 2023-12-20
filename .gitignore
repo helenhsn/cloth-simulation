@@ -1,2 +1,4 @@
 build
+vendors/glfw/build
+.vscode
 
