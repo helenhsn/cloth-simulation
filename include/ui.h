@@ -8,12 +8,6 @@
 class GUI
 {
     public:
-    float *m; 
-    float *Ks; 
-    float *Kd;
-    float *timeStep;
-    float *L;
-    unsigned int *N;
 
     GUI(GLFWwindow *window)
     {
@@ -45,32 +39,40 @@ class GUI
     {
         ExplicitSolver *solver = static_cast<ExplicitSolver *>(sim->solver());
 
-        ImGui::Text("Average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 
 
         ImGui::Begin("SETTINGS WINDOW");
+        
+        ImGui::Text("Average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
 
-        ImGui::SeparatorText("Camera info");
+
+        if (ImGui::Button("RESET SIMULATION", ImVec2(150, 30)))
+        {
+            sim->reset();
+        }
+        if (ImGui::Button("PAUSE SIMULATION", ImVec2(150, 30))) 
+        {
+            sim->changePaused();
+            std::cout << "PAUSED" << std::endl;    
+        }
+        
+
+        ImGui::SeparatorText("INFOS");
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "RMB = rotate camera");
         
 
-        ImGui::SeparatorText("Simulation parameters");
+        ImGui::SeparatorText("PARAMETERS");
         ImGui::SliderFloat("Mass", solver->m(), 1.0f, 50.0f, "%.1f");
         ImGui::SliderFloat("Stiffness", solver->Ks(), 1.0f, 3500.0f, "%.1f");
-        ImGui::SliderFloat("Damping", solver->Kd(), 0.0f, 100.0f, "%.2f");
+        ImGui::SliderFloat("Damping", solver->Kd(), 0.0f, 3500.0f, "%.2f");
         ImGui::SliderFloat("Viscous Force", solver->Ka(), 0.0f, 20.0f, "%.1f");
         ImGui::SliderFloat("Rest length", solver->L(), 1.0f, 50.0f, "%.1f");
         ImGui::SliderFloat("Time step", solver->timeStep(), 0.00001f, 0.1f, "%.6f");
         ImGui::SliderInt("Number substeps", sim->nbSubSteps(), 1, 70);
-
-        ImGui::Button("RESET SIMULATION", ImVec2(80, 30));
-        ImGui::Button("PAUSE SIMULATION", ImVec2(80, 30));
-        
-
-        ImGui::SeparatorText("Cloth Mesh");
-        ImGui::SliderInt("N (edge vertices number)", (int *) cloth->ptrN(), 4, 128);
-        
         ImGui::SliderFloat3("Wind force", solver->wind(), -50.0f, 50.0f);
+        
+
+        
         
         ImGui::End();
     }
@@ -80,4 +82,7 @@ class GUI
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
+
+
+    private:
 };

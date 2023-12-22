@@ -17,16 +17,6 @@ void windowResizeCallback(GLFWwindow *window, int width, int height);
 void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 void keyboard_callback(GLFWwindow *window);
 
-void printMat4(const glm::mat4& matrix) {
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            std::cout << matrix[i][j] << "\t";
-        }
-        std::cout << std::endl;
-    }
-}
-
-
 
 //Camera camera(glm::vec3(21.8819, 20.3187, 83.4559));
 Camera camera(glm::vec3(100.0, 200., 700.0));
@@ -79,11 +69,11 @@ int main()
     ShaderProgram sphere_pgrm("../shaders/sphere.vs", "../shaders/sphere.fs");
     ShaderProgram cloth_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
 
-    Plane *grid = new Plane(cloth_pgrm);
-    Plane *ground = new Plane(ground_pgrm, 500, {false, false, false});
+    Plane *cloth = new Plane(cloth_pgrm.glid, 128);
+    Plane *ground = new Plane(ground_pgrm.glid, 500, {false, false, false});
     ground->setPrimOpenGL(GL_LINES);
-    Sphere *sphere = new Sphere(sphere_pgrm);
-    Simulation *sim = new Simulation(grid);
+    Sphere *sphere = new Sphere(sphere_pgrm.glid);
+    Simulation *sim = new Simulation(cloth);
     sim->addCollider(sphere);
 
     // Init GUI (imgui window)
@@ -140,10 +130,10 @@ int main()
         model = glm::translate(model, glm::vec3(0.0f, 100.0f, 0.0f));
         cloth_pgrm.setMat4("model", model);
 
-        glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
-        grid->draw();
+        glPolygonMode(GL_FRONT_AND_BACK,  GL_FILL);
+        cloth->draw();
 
-        gui->buildWindow(sim, grid); // TODO delete cast when implementing Implicit Solver <!>
+        gui->buildWindow(sim, cloth); // TODO delete cast when implementing Implicit Solver <!>
         gui->render();
 
         glfwSwapBuffers(window);

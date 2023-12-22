@@ -13,11 +13,6 @@ __device__ float dot(glm::vec3 a, glm::vec3 b)
     return a.x*b.x + a.y*b.y + a.z*b.z;
 }
 
-__device__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
-{
-    glm::vec3 res = glm::vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.y);
-    return res;
-}
 
 __device__ glm::vec3 normalize(glm::vec3 v)
 {
@@ -25,52 +20,27 @@ __device__ glm::vec3 normalize(glm::vec3 v)
     if (res < 0.0000001) return v;
     return v/sqrt(res);
 }
+__device__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
+{
+    glm::vec3 res = glm::vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.y);
+    return normalize(res);
+}
 __device__ bool is_corner(int k, int N)
 {
     return k == 0 || k == (N*N-1) || k == (N*(N-1)) || k == (N-1);
 }
 
-__device__ glm::vec3 springForce(glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float Ks)
+__device__ glm::vec3 computeSpringForces(glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float Ks, float Kd)
 {
     glm::vec3 diff_xij = x_j- x_i;
     float length_xi_xj  = sqrt(dot(diff_xij, diff_xij));
     float c_spring = Ks*(1.0f - L/length_xi_xj);
     glm::vec3 spring = c_spring * diff_xij;
 
-    // printf("\n x id %i = %f %f %f // x id %i = %f %f %f // SPRING = %f %f %f", id_i, x_i.x, x_i.y, x_i.z, id_j, x_j.x , x_j.y, x_j.z, spring.x, spring.y, spring.z);
-
-    // float tau_c = 0.05;
-    // float shrinking_rate = (length_xi_xj - L)/L;
-
-    // if (is_shear_stretch && shrinking_rate > tau_c)
-    // {
-
-    //     float correction = Ks*(1.0f - (1.0+tau_c) * L/length_xi_xj);
-        
-    //     // if second point in spring is fixed -> correct value when length is too high
-    //     if (id_j == 0 || id_j == N*(N-1)) {
-    //         // printf("id_i = %i && id_j = %i", id_i, id_j);
-    //         // printf(" SPRING BEFORE CORRECTION = %f %f %f \n", spring.x, spring.y, spring.z);
-    //         spring += diff_xij*correction;
-    //         //printf(" SPRING AFTER CORRECTION = %f %f %f \n\n\n", spring.x, spring.y, spring.z);
-    //     } 
-            
-        
-    //     // if first point && second point are not fixed
-    //     if (id_j != 0 && id_j != N*(N-1) && id_i != 0 && id_i != (N*(N-1))) spring+=0.5f*correction*diff_xij;
-    // }
+    glm::vec3 diff_vij = v_j - v_i;
+    glm::vec3 damping =  -Kd*dot(diff_vij, diff_xij)*normalize(diff_xij);
 
     return spring;
-}
-
-__device__ glm::vec3 dampingForce(glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float Kd)
-{
-    glm::vec3 diff_vij = v_j - v_i;
-    glm::vec3 diff_xij = normalize(x_j- x_i);
-    glm::vec3 damping =  -Kd*dot(diff_vij, diff_xij)*diff_xij;
-    //printf("\n x id %i = %f %f %f // x id %i = %f %f %f // DAMPING = %f %f %f", id_i, x_i.x, x_i.y, x_i.z, id_j, x_j.x , x_j.y, x_j.z, damping.x, damping.y, damping.z);
-
-    return damping;
 }
 
 
@@ -84,12 +54,7 @@ __global__ void updateInternalForces(int maxTid, int N, glm::ivec2 *springIds, g
     {
         glm::ivec2 ids = springIds[tid];
 
-        glm::vec3 fSpring = springForce(xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], L, Ks);
-
-
-        // ADD DAMPING FORCE !! TODO
-        fSpring += dampingForce(xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], Kd);
-        // printf("\n\n F de Id %i == %f %f %f ", tid,  fSpring.x, fSpring.y, fSpring.z);
+        glm::vec3 fSpring = computeSpringForces(xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], L, Ks, Kd);
 
         atomicAdd(&FIter[ids.x].x, fSpring.x);
         atomicAdd(&FIter[ids.x].y, fSpring.y);
@@ -448,7 +413,7 @@ class ExplicitSolver: public Solver
     
 
     ExplicitSolver(Plane *grid) : 
-    Solver(0.01f), m_L(1.0), m_Ks(2000.0), m_Kd(0.0), m_Ka(0.5), m_unitM(1.0), m_wind(glm::vec3(0.0f)), m_stretch_L(sqrt(2.0*m_L*m_L)), m_bend_L(2.0*m_L), m_bendDiag_L(2.0*m_stretch_L)
+    Solver(0.01f), m_L(1.0), m_Ks(2000.0), m_Kd(2.0), m_Ka(0.5), m_unitM(1.0), m_wind(glm::vec3(0.0f)), m_stretch_L(sqrt(2.0*m_L*m_L)), m_bend_L(2.0*m_L), m_bendDiag_L(2.0*m_stretch_L)
     {
         m_windUI = new float[3]; 
         wind();

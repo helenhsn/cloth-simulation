@@ -8,6 +8,7 @@
 #include "glm/glm.hpp"
 #include <iostream>
 #include <vector>
+#include "drawable.h"
 
 typedef struct Data 
 {
@@ -40,9 +41,10 @@ private:
 
 public:
     Mesh()=default;
-    Mesh(ShaderProgram pgrm, const Data &data, std::vector<bool> isCudaShared, GLenum prim = GL_TRIANGLES): m_data(data), m_glid(pgrm.glid), m_nbCudaVBOs(isCudaShared.size()), m_primOpenGL(prim)
+    Mesh(GLint pgrmGLid, const Data &data, std::vector<bool> isCudaShared, GLenum prim = GL_TRIANGLES): m_data(data), m_glid(pgrmGLid), m_nbCudaVBOs(isCudaShared.size()), m_primOpenGL(prim)
     {
 
+        std::cout << "glid = " << m_glid << std::endl;
 
         m_VerticesNb = data.vertices.size();
         m_IndicesNb = data.indices.size();
@@ -55,10 +57,10 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[0]);
         glBufferData(GL_ARRAY_BUFFER, data.vertices.size()*sizeof(glm::vec3), data.vertices.data(), GL_STATIC_DRAW);
         
-        GLint loc = glGetAttribLocation(pgrm.glid, "pos");
+        GLint loc = glGetAttribLocation(m_glid, "pos");
         if (loc < 0) 
         {
-            std::cout << "Vertices attrib not found in shader : " << pgrm.glid << std::endl;
+            std::cout << "Vertices attrib not found in shader : " << m_glid << std::endl;
         }
         glEnableVertexAttribArray(loc);
         glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
@@ -68,10 +70,10 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[1]);
         glBufferData(GL_ARRAY_BUFFER, data.normals.size()*sizeof(glm::vec3), data.normals.data(), GL_STATIC_DRAW);
         
-        loc = glGetAttribLocation(pgrm.glid, "n");
+        loc = glGetAttribLocation(m_glid, "n");
         if (loc < 0) 
         {
-            std::cout << "Normal attrib not found in shader : "  << pgrm.glid << std::endl;
+            std::cout << "Normal attrib not found in shader : "  << m_glid << std::endl;
         }
         glEnableVertexAttribArray(loc);
         glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
@@ -81,10 +83,10 @@ public:
         glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[2]);
         glBufferData(GL_ARRAY_BUFFER, data.uv.size()*sizeof(glm::vec2), data.uv.data(), GL_STATIC_DRAW);
         
-        loc = glGetAttribLocation(pgrm.glid, "uv");
+        loc = glGetAttribLocation(m_glid, "uv");
         if (loc < 0) 
         {
-            std::cout << "UV attrib not found in shader : " << pgrm.glid << std::endl;
+            std::cout << "UV attrib not found in shader : " << m_glid << std::endl;
         }
         glEnableVertexAttribArray(loc);
         glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void *)0);
@@ -123,12 +125,19 @@ public:
         }
         glDeleteBuffers(1, &m_EBO);
         m_EBO = 0;
+
+        delete m_cudaResVBOs;
+        m_cudaResVBOs = 0;
+        
+        delete m_dataPtrVBOs;
+        m_dataPtrVBOs = 0;
     };
 
-    virtual void draw()
+    void draw()
     {
         
         glBindVertexArray(m_VAO);
+        std::cout << "glid = " << m_glid <<  " && prim opengl = " << m_primOpenGL << " && " << m_IndicesNb << std::endl;
         glDrawElements(m_primOpenGL,  m_IndicesNb, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     };
@@ -153,7 +162,11 @@ public:
     {
         return m_dataPtrVBOs[i];
     };
-
+    GLint glid() 
+    {
+        std::cout << "GLID = " << m_glid << std::endl;
+        return m_glid;
+    };
     int getVerticesNb() {return m_VerticesNb;};
 
     void setPrimOpenGL(GLenum prim) { m_primOpenGL = prim; };
@@ -164,7 +177,7 @@ class Plane: public Mesh
 {
 
     public:
-    Plane(ShaderProgram pgrm, int size_edge=128, std::vector<bool> shared = {true, true, false}): Mesh(pgrm, Plane::init_mesh(size_edge), shared), m_N(size_edge)
+    Plane(GLint pgrmGLid, int size_edge=128, std::vector<bool> shared = {true, true, false}): Mesh(pgrmGLid, Plane::init_mesh(size_edge), shared), m_N(size_edge)
     {}
 
     static Data init_mesh(int &N_) {
@@ -226,8 +239,8 @@ class Sphere : public Mesh
 
     public:
 
-    Sphere(ShaderProgram pgrm, std::vector<bool> shared = {true, false, false}): 
-    Mesh(pgrm, Sphere::init_mesh(), shared), 
+    Sphere(GLint pgrmGLid, std::vector<bool> shared = {true, false, false}): 
+    Mesh(pgrmGLid, Sphere::init_mesh(), shared), 
     m_radius(10.0f)
     {}
     
