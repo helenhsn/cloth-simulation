@@ -44,8 +44,6 @@ public:
     Mesh(GLint pgrmGLid, const Data &data, std::vector<bool> isCudaShared, GLenum prim = GL_TRIANGLES): m_data(data), m_glid(pgrmGLid), m_nbCudaVBOs(isCudaShared.size()), m_primOpenGL(prim)
     {
 
-        std::cout << "glid = " << m_glid << std::endl;
-
         m_VerticesNb = data.vertices.size();
         m_IndicesNb = data.indices.size();
 
@@ -137,7 +135,6 @@ public:
     {
         
         glBindVertexArray(m_VAO);
-        std::cout << "glid = " << m_glid <<  " && prim opengl = " << m_primOpenGL << " && " << m_IndicesNb << std::endl;
         glDrawElements(m_primOpenGL,  m_IndicesNb, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     };
@@ -162,11 +159,12 @@ public:
     {
         return m_dataPtrVBOs[i];
     };
+
     GLint glid() 
     {
-        std::cout << "GLID = " << m_glid << std::endl;
         return m_glid;
     };
+
     int getVerticesNb() {return m_VerticesNb;};
 
     void setPrimOpenGL(GLenum prim) { m_primOpenGL = prim; };
