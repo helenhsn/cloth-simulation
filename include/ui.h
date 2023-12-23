@@ -53,7 +53,6 @@ class GUI
         if (ImGui::Button("PAUSE SIMULATION", ImVec2(150, 30))) 
         {
             sim->changePaused();
-            std::cout << "PAUSED" << std::endl;    
         }
         
 
@@ -62,14 +61,20 @@ class GUI
         
 
         ImGui::SeparatorText("PARAMETERS");
-        ImGui::SliderFloat("Mass", solver->m(), 1.0f, 50.0f, "%.1f");
-        ImGui::SliderFloat("Stiffness", solver->Ks(), 1.0f, 3500.0f, "%.1f");
-        ImGui::SliderFloat("Damping", solver->Kd(), 0.0f, 3500.0f, "%.2f");
+        if (ImGui::SliderFloat("Mass", solver->m(), 0.01f, 50.0f, "%.2f"))
+        {
+            solver->updateGravity();
+        }
+        ImGui::SliderFloat("Stiffness", solver->Ks(), 1.0f, 400.0f, "%.1f");
+        ImGui::SliderFloat("Damping", solver->Kd(), 0.0f, 40.0f, "%.3f");
         ImGui::SliderFloat("Viscous Force", solver->Ka(), 0.0f, 20.0f, "%.1f");
         ImGui::SliderFloat("Rest length", solver->L(), 1.0f, 50.0f, "%.1f");
         ImGui::SliderFloat("Time step", solver->timeStep(), 0.00001f, 0.1f, "%.6f");
         ImGui::SliderInt("Number substeps", sim->nbSubSteps(), 1, 70);
-        ImGui::SliderFloat3("Wind force", solver->wind(), -50.0f, 50.0f);
+        if (ImGui::SliderFloat3("Wind force", solver->wind(), -50.0f, 50.0f))
+        {
+            solver->updateWind();
+        }
         
 
         

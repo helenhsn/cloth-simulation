@@ -19,7 +19,7 @@ void keyboard_callback(GLFWwindow *window);
 
 
 //Camera camera(glm::vec3(21.8819, 20.3187, 83.4559));
-Camera camera(glm::vec3(100.0, 200., 700.0));
+Camera camera(glm::vec3(100.0, 200., 500.0));
 
 float dt = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;
@@ -130,7 +130,7 @@ int main()
         model = glm::translate(model, glm::vec3(0.0f, 100.0f, 0.0f));
         cloth_pgrm.setMat4("model", model);
 
-        glPolygonMode(GL_FRONT_AND_BACK,  GL_FILL);
+        glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
         cloth->draw();
 
         gui->buildWindow(sim, cloth); // TODO delete cast when implementing Implicit Solver <!>

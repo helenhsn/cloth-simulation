@@ -8,13 +8,13 @@
 using namespace std;
 
 
-__device__ float dot(glm::vec3 a, glm::vec3 b)
+__device__ __host__ float dot(glm::vec3 a, glm::vec3 b)
 {
     return a.x*b.x + a.y*b.y + a.z*b.z;
 }
 
 
-__device__ glm::vec3 normalize(glm::vec3 v)
+__device__ __host__ glm::vec3 normalize(glm::vec3 v)
 {
     float res = dot(v, v);
     if (res < 0.0000001) return v;
@@ -30,21 +30,34 @@ __device__ bool is_corner(int k, int N)
     return k == 0 || k == (N*N-1) || k == (N*(N-1)) || k == (N-1);
 }
 
-__device__ glm::vec3 computeSpringForces(glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float Ks, float Kd)
+__device__ glm::vec3 computeSpringForces(bool isStretchSpring, bool isAFixed, bool isBFixed, int i, int j, glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float Ks, float Kd)
 {
-    glm::vec3 diff_xij = x_j- x_i;
-    float length_xi_xj  = sqrt(dot(diff_xij, diff_xij));
-    float c_spring = Ks*(1.0f - L/length_xi_xj);
-    glm::vec3 spring = c_spring * diff_xij;
+    glm::vec3 diff_xij = x_j - x_i;
+    float length_xij  = sqrt(dot(diff_xij, diff_xij));
+    glm::vec3 dir_xij = diff_xij/length_xij;
 
-    glm::vec3 diff_vij = v_j - v_i;
-    glm::vec3 damping =  -Kd*dot(diff_vij, diff_xij)*normalize(diff_xij);
+    float spring = Ks*(length_xij - L);
+    float damping = Kd*dot(v_j-v_i, dir_xij);
 
-    return spring;
+    // printf("\n\n n°%i : SPRING = %f // DAMPING = %f  ", i, spring, damping);
+    float correction = 0.0;
+    float tau_c = 0.05;
+    float shrinking = (length_xij - L)/L;
+    if (isStretchSpring && shrinking > tau_c)
+    {
+        correction = Ks*(1.0 - (1.0+tau_c) * L / length_xij);
+        // if first point && second point are not fixed
+        if (!isAFixed && !isBFixed) correction *= 0.5;
+
+    }
+    glm::vec3 total = (spring + correction + damping)*dir_xij;
+    if (i==129 || j == 129) printf("\n\n n°%i && j=%i : shrinking rate = %f // CORRECTION = %f // SPRING = %f // DAMPING = %f // TOTAL FORCE = %f %f %f", i, j, shrinking, correction, spring, damping, total.x, total.y, total.z);
+
+    return total;
 }
 
 
-__global__ void updateInternalForces(int maxTid, int N, glm::ivec2 *springIds, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, float L, float Ks, float Kd)
+__global__ void updateInternalForces(bool isStretchSpring, int maxTid, int N, glm::ivec2 *springIds, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, float L, float Ks, float Kd)
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
@@ -53,8 +66,10 @@ __global__ void updateInternalForces(int maxTid, int N, glm::ivec2 *springIds, g
     if (tid < maxTid)
     {
         glm::ivec2 ids = springIds[tid];
+        bool isAFixed = (ids.x % 128 == 0);
+        bool isBFixed = (ids.y % 128 == 0);
+        glm::vec3 fSpring = computeSpringForces(isStretchSpring, isAFixed, isBFixed, ids.x, ids.y, xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], L, Ks, Kd);
 
-        glm::vec3 fSpring = computeSpringForces(xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], L, Ks, Kd);
 
         atomicAdd(&FIter[ids.x].x, fSpring.x);
         atomicAdd(&FIter[ids.x].y, fSpring.y);
@@ -85,7 +100,7 @@ __global__ void updateIterBuffers(int maxTid, int N, float kOffset, float yOffse
     {
 
         float fixedFactor = 0.0;
-        if (tid!=0 && tid != N*(N-1))
+        if (i !=0)
         {
             fixedFactor = 1.0;
         }
@@ -98,23 +113,7 @@ __global__ void updateIterBuffers(int maxTid, int N, float kOffset, float yOffse
 
 }
 
-__device__ glm::vec3 externalForces(glm::vec3 v, glm::vec3 n, float m, glm::vec3 wind, glm::vec3 normWind, float Ka)
-{
-    /**
-     * Compute the sum of all external forces applied to a vertex.
-     *
-    */
-
-    glm::vec3 gravity = glm::vec3(0.0, -9.81*m, 0.0);
-
-    glm::vec3 windForce = dot(n, abs(wind)) * normWind;
-
-    glm::vec3 viscousForce = -Ka*v;
-
-    return gravity + windForce + viscousForce;
-}
-
-__global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *FIterAcc, glm::vec3 *n, float m, glm::vec3 wind, glm::vec3 normWind, float Ka)
+__global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *FIterAcc, glm::vec3 *n, float m, glm::vec3 absWind, glm::vec3 normWind, glm::vec3 gravity, float Ka)
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
@@ -131,8 +130,10 @@ __global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3
 
         n[tid] = normal;
 
-        FIter[tid] += externalForces(vIter[tid], normal, m, wind, normWind, Ka);
 
+        FIter[tid] += dot(abs(normal), absWind)*normWind + gravity - Ka*vIter[tid]; // external forces : wind force + gravity force + friction force
+
+        if (tid==129) printf("\nFORCE = %f %f %f ", FIter[tid].x, FIter[tid].y, FIter[tid].z);
         FIterAcc[tid] += kOffset * FIter[tid];
 
         
@@ -152,7 +153,7 @@ __global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm:
         // using Verlet integration scheme
         glm::vec3 last_pos = x[tid];
 
-        if (tid!=0 && tid != N*(N-1)) 
+        if (i != 0) 
         {
             // RK4 
             x[tid] = x[tid] + h*vIterAcc[tid]/6.0f;
@@ -219,6 +220,8 @@ class ExplicitSolver: public Solver
     float m_Kd;
     float m_unitM;
     glm::vec3 m_wind;
+    glm::vec3 m_windNormed;
+    glm::vec3 m_gravity;
     float *m_windUI;
     float m_Ka;
 
@@ -238,12 +241,6 @@ class ExplicitSolver: public Solver
     ExplicitSolver(const ExplicitSolver &other);
     ExplicitSolver& operator=(const ExplicitSolver &other);
 
-    void fetchWind()
-    {
-        for (int i = 0; i<3; ++i)
-            m_wind[i] = m_windUI[i];
-    }
-
     void initSprings(int N)
     {
         int N_minus_1 = N-1;
@@ -257,12 +254,31 @@ class ExplicitSolver: public Solver
                 int id = j*N+i;
 
                 // add structural springs id & length
-                if (j < N_minus_1) m_springs.structural.push_back(glm::ivec2(id, id+N)); // right spring
-                if (i < N_minus_1) m_springs.structural.push_back(glm::ivec2(id, id+1)); // bottom spring
+                
+                if (j < N_minus_1)
+                {   
+                    std::cout << "\nADDING struct SPRING = " << id << " & " << id+N << std::endl;
+                    m_springs.structural.push_back(glm::ivec2(id, id+N)); // right spring
+                }
+                if (i < N_minus_1) 
+                {
+                    std::cout << "\nADDING struct SPRING = " << id << " & " << id+1 << std::endl;
+                    m_springs.structural.push_back(glm::ivec2(id, id+1)); // bottom spring
+                }
+
 
                 // add stretch springs id & length
-                if (i < N_minus_1 && j < N_minus_1) m_springs.stretch.push_back(glm::ivec2(id, id+N+1)); // 1st diag spring
-                if (i > 0 && j < N_minus_1) m_springs.stretch.push_back(glm::ivec2(id, id+N-1)); // 2nd diag spring
+                if (i < N_minus_1 && j < N_minus_1) 
+                {
+                    std::cout << "\nADDING strtch SPRING = " << id << " & " << id+N+1 << std::endl;
+                    m_springs.stretch.push_back(glm::ivec2(id, id+N+1)); // 1st diag spring
+                }
+                if (i > 0 && j < N_minus_1)
+                {
+                    std::cout << "\nADDING strtch SPRING = " << id << " & " << id+N-1 << std::endl;
+                    m_springs.stretch.push_back(glm::ivec2(id, id+N-1)); // 2nd diag spring
+                } 
+                    
 
                 // adding bend springs
                 if (j < N_minus_2) m_springs.bend.push_back(glm::ivec2(id, id+2*N)); // right bend spring
@@ -293,33 +309,33 @@ class ExplicitSolver: public Solver
 
     void updateSpringForces(Plane *grid)
     {
-
+        std::cout << "\n\n UPDATE ==========!!!!!!!!!!!" << std::endl;
         // UPDATING STRUCTURAL SPRING FORCES
 
         dim3 dimGridStructural((m_springs.sqrtNStructural+31)/32, (m_springs.sqrtNStructural+31)/32);
         dim3 dimBlock1D(32, 32);
-        updateInternalForces<<<dimGridStructural, dimBlock1D>>>(m_springs.structural.size(), m_springs.sqrtNStructural, m_springs.structuralCuda, m_xIter, m_vIter, m_FIter, m_L, m_Ks, m_Kd);
+        updateInternalForces<<<dimGridStructural, dimBlock1D>>>(true, m_springs.structural.size(), m_springs.sqrtNStructural, m_springs.structuralCuda, m_xIter, m_vIter, m_FIter, m_L, m_Ks, m_Kd);
         cudaErrorCheck(cudaDeviceSynchronize());
 
         // UPDATING STRETCH SPRING FORCES
 
         dim3 dimGridStretch((m_springs.sqrtNStretch+31)/32, (m_springs.sqrtNStretch+31)/32);
 
-        updateInternalForces<<<dimGridStretch, dimBlock1D>>>(m_springs.stretch.size(), m_springs.sqrtNStretch, m_springs.stretchCuda, m_xIter, m_vIter, m_FIter, m_stretch_L, m_Ks, m_Kd);
+        updateInternalForces<<<dimGridStretch, dimBlock1D>>>(true, m_springs.stretch.size(), m_springs.sqrtNStretch, m_springs.stretchCuda, m_xIter, m_vIter, m_FIter, m_stretch_L, m_Ks, m_Kd);
         cudaErrorCheck(cudaDeviceSynchronize());
 
         // UPDATING BEND SPRING FORCES
 
         dim3 dimGridBend((m_springs.sqrtNBend+31)/32, (m_springs.sqrtNBend+31)/32);
 
-        updateInternalForces<<<dimGridBend, dimBlock1D>>>(m_springs.bend.size(), m_springs.sqrtNBend, m_springs.bendCuda, m_xIter, m_vIter, m_FIter, m_bend_L, m_Ks, m_Kd);
+        updateInternalForces<<<dimGridBend, dimBlock1D>>>(false, m_springs.bend.size(), m_springs.sqrtNBend, m_springs.bendCuda, m_xIter, m_vIter, m_FIter, m_bend_L, m_Ks, m_Kd);
         cudaErrorCheck(cudaDeviceSynchronize());
 
         // UPDATING BEND DIAG SPRING FORCES
 
         dim3 dimGridBendDiag((m_springs.sqrtNBendDiag+31)/32, (m_springs.sqrtNBendDiag+31)/32);
 
-        updateInternalForces<<<dimGridBendDiag, dimBlock1D>>>(m_springs.bendDiag.size(), m_springs.sqrtNBendDiag, m_springs.bendDiagCuda, m_xIter, m_vIter, m_FIter, m_bendDiag_L, m_Ks, m_Kd);
+        updateInternalForces<<<dimGridBendDiag, dimBlock1D>>>(false, m_springs.bendDiag.size(), m_springs.sqrtNBendDiag, m_springs.bendDiagCuda, m_xIter, m_vIter, m_FIter, m_bendDiag_L, m_Ks, m_Kd);
         cudaErrorCheck(cudaDeviceSynchronize());
         
     }
@@ -350,13 +366,6 @@ class ExplicitSolver: public Solver
 
         updateSpringForces(grid);
 
-        fetchWind();
-
-        // Computing new positions with new internal forces
-        //float factor = 20.0f*glm::smoothstep(0.0f, 0.0f,sin(currentTime*0.4f));
-        float norm_wind_sq = glm::dot(m_wind,m_wind);
-        glm::vec3 normWind =  norm_wind_sq < 0.000001 ? m_wind : m_wind/sqrt(norm_wind_sq);
-
         updateExternalForces<<<dimGridScheme, dimBlock>>>(
             grid->getVerticesNb(), 
             grid->N(),
@@ -368,7 +377,8 @@ class ExplicitSolver: public Solver
             (glm::vec3 *) grid->getDataPtr(1), 
             m_unitM, 
             m_wind, 
-            normWind, 
+            m_windNormed, 
+            m_gravity,
             m_Ka
             );
         cudaErrorCheck(cudaDeviceSynchronize());
@@ -413,7 +423,17 @@ class ExplicitSolver: public Solver
     
 
     ExplicitSolver(Plane *grid) : 
-    Solver(0.01f), m_L(1.0), m_Ks(2000.0), m_Kd(2.0), m_Ka(0.5), m_unitM(1.0), m_wind(glm::vec3(0.0f)), m_stretch_L(sqrt(2.0*m_L*m_L)), m_bend_L(2.0*m_L), m_bendDiag_L(2.0*m_stretch_L)
+    Solver(0.01f), 
+    m_L(1.0), 
+    m_Ks(1.0), 
+    m_Kd(1.0), 
+    m_Ka(0.2), 
+    m_unitM(1.0), 
+    m_wind(glm::vec3(0.0f)),
+    m_gravity(glm::vec3(0.0f, -9.81f*m_unitM, 0.0f)),
+    m_stretch_L(sqrt(2.0*m_L*m_L)), 
+    m_bend_L(2.0*m_L), 
+    m_bendDiag_L(2.0*m_stretch_L)
     {
         m_windUI = new float[3]; 
         wind();
@@ -472,6 +492,20 @@ class ExplicitSolver: public Solver
 
     };
 
+    void updateWind()
+    {
+        std::cout << "UPDATE WIND" << std::endl;
+        for (int i = 0; i<3; ++i)
+            m_wind[i] = m_windUI[i];
+        m_windNormed = normalize(m_wind);
+        m_wind = abs(m_wind);
+    }
+
+    void updateGravity()
+    {
+        std::cout << "UPDATE GRAVITY" << std::endl;
+        m_gravity.y = -9.81*m_unitM;
+    }
 
 
 };

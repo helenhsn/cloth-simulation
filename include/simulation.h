@@ -26,7 +26,7 @@ class Simulation
 
     public:
     Simulation(Plane *grid)
-    : m_grid(grid), m_nbSubSteps(5), m_isPaused(false)
+    : m_grid(grid), m_nbSubSteps(6), m_isPaused(false)
     {
         m_grid->bindCudaData();
         m_solver = new ExplicitSolver(grid);
@@ -63,8 +63,9 @@ class Simulation
     void reset()
     {
         int glid = m_grid->glid();
+        int sizeEdge = m_grid->N();
         delete m_grid;
-        m_grid = new Plane(glid);
+        m_grid = new Plane(glid, sizeEdge);
     }
 };
 #endif
