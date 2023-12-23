@@ -425,7 +425,7 @@ class ExplicitSolver: public Solver
     ExplicitSolver(Plane *grid) : 
     Solver(0.01f), 
     m_L(1.0), 
-    m_Ks(1.0), 
+    m_Ks(200.0), 
     m_Kd(1.0), 
     m_Ka(0.2), 
     m_unitM(1.0), 
