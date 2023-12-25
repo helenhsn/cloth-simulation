@@ -19,7 +19,7 @@ void keyboard_callback(GLFWwindow *window);
 
 
 //Camera camera(glm::vec3(21.8819, 20.3187, 83.4559));
-Camera camera(glm::vec3(100.0, 200., 500.0));
+Camera camera(glm::vec3(100.0, 200., 700.0));
 
 float dt = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;

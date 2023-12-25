@@ -61,11 +61,11 @@ class GUI
         
 
         ImGui::SeparatorText("PARAMETERS");
-        if (ImGui::SliderFloat("Mass", solver->m(), 0.01f, 50.0f, "%.2f"))
+        if (ImGui::SliderFloat("Mass", solver->m(), 1.0f, 10.0f, "%.2f"))
         {
             solver->updateGravity();
         }
-        ImGui::SliderFloat("Stiffness", solver->Ks(), 1.0f, 400.0f, "%.1f");
+        ImGui::SliderFloat("Stiffness", solver->Ks(), 1.0f, 5000.0f, "%.1f");
         ImGui::SliderFloat("Damping", solver->Kd(), 0.0f, 40.0f, "%.3f");
         ImGui::SliderFloat("Viscous Force", solver->Ka(), 0.0f, 20.0f, "%.1f");
         ImGui::SliderFloat("Rest length", solver->L(), 1.0f, 50.0f, "%.1f");

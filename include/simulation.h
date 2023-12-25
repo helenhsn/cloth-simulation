@@ -26,7 +26,7 @@ class Simulation
 
     public:
     Simulation(Plane *grid)
-    : m_grid(grid), m_nbSubSteps(6), m_isPaused(false)
+    : m_grid(grid), m_nbSubSteps(5), m_isPaused(false)
     {
         m_grid->bindCudaData();
         m_solver = new ExplicitSolver(grid);
