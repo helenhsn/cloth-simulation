@@ -2,33 +2,12 @@
 #define EXPLICIT_SOLVER_H
 
 #include "mesh.hcu"
-#include "glm/glm.hpp"
 #include "solver.h"
+#include "cuda_utils.hcu"
 
 using namespace std;
 
 
-__device__ __host__ float dot(glm::vec3 a, glm::vec3 b)
-{
-    return a.x*b.x + a.y*b.y + a.z*b.z;
-}
-
-
-__device__ __host__ glm::vec3 normalize(glm::vec3 v)
-{
-    float res = dot(v, v);
-    if (res < 0.0000001) return v;
-    return v/sqrt(res);
-}
-__device__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
-{
-    glm::vec3 res = glm::vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.y);
-    return normalize(res);
-}
-__device__ bool is_corner(int k, int N)
-{
-    return k == 0 || k == (N*N-1) || k == (N*(N-1)) || k == (N-1);
-}
 
 __device__ void atomicadd(glm::vec3 *tab, int idx, glm::vec3 val, int seed)
 {
@@ -44,6 +23,8 @@ __device__ glm::vec3 computeSpringForces(bool isStretchSpring, bool isAFixed, bo
 {
     glm::vec3 diff_xij = x_j - x_i;
     float length_xij  = sqrt(dot(diff_xij, diff_xij));
+
+    if (abs(length_xij) < 10e-3) return glm::vec3(0.0f);
     glm::vec3 dir_xij = diff_xij/length_xij;
 
     float spring = Ks*(length_xij - L);
@@ -53,30 +34,36 @@ __device__ glm::vec3 computeSpringForces(bool isStretchSpring, bool isAFixed, bo
     float correction = 0.0;
     float tau_c = 0.1;
     float shrinking = (length_xij - L)/L;
-    if (isStretchSpring && shrinking > tau_c)
+    if (shrinking > tau_c)
     {
-        correction = Ks*(1.0 - (1.0+tau_c) * L / length_xij);
+        correction = 3.0*Ks*(length_xij - (1.0-tau_c) * L);
         // if first point && second point are not fixed
-        if (!isAFixed && !isBFixed) correction *= 0.5;
+        if (!isAFixed && !isBFixed) 
+        {
+            correction *= 0.5;
+        }
 
     }
-    glm::vec3 total = (spring + correction + damping)*dir_xij;
+    glm::vec3 total = (spring + damping + correction)*dir_xij;
 
+    // if (isnan(spring)) printf("\nvi = %f %f %f vj = %f %f %f Kd = %f", v_i.x, v_i.y, v_i.z, v_j.x, v_j.y, v_j.z, Kd);
+
+    // if (isnan(total.x)) printf("\nspring = %f // damping = %f // correction = %f \n >>> other debug : diff_xij = %f %f %f // ", spring, damping, correction, dir_xij.x, dir_xij.y, dir_xij.z);
     return total;
 }
 
 
-__global__ void updateInternalForces(bool isStretchSpring, int maxTid, int N, glm::ivec2 *springIds, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, float L, float Ks, float Kd)
+__global__ void updateInternalForces(bool isStretchSpring, int maxTid, int Ngrid, int N, glm::ivec2 *springIds, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, float L, float Ks, float Kd)
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
     int tid = j*N+i;
 
-    if (tid < maxTid)
+    if (tid < maxTid )
     {
         glm::ivec2 ids = springIds[tid];
-        bool isAFixed = (ids.x % 128 == 0);
-        bool isBFixed = (ids.y % 128 == 0);
+        bool isAFixed = (ids.x % Ngrid == 0);
+        bool isBFixed = (ids.y % Ngrid == 0);
         glm::vec3 fSpring = computeSpringForces(isStretchSpring, isAFixed, isBFixed, ids.x, ids.y, xIter[ids.x], vIter[ids.x], xIter[ids.y], vIter[ids.y], L, Ks, Kd);
 
         float *addA = &FIter[ids.x].x;
@@ -89,6 +76,12 @@ __global__ void updateInternalForces(bool isStretchSpring, int maxTid, int N, gl
         atomicAdd(addB, -fSpring.x);
         atomicAdd(addB + 1, -fSpring.y);
         atomicAdd(addB + 2, -fSpring.z);
+
+        if (ids.y==33 && ids.x ==0) printf("\n tidI = %i // tidJ = %i // F = %f %f %f, xi=%f %f %f // xj =%f %f %f", i, j, -fSpring.x, -fSpring.y, -fSpring.z, xIter[ids.x].x, xIter[ids.x].y, xIter[ids.x].z, xIter[ids.y].x, xIter[ids.y].y, xIter[ids.y].z);
+
+        // if (ids.x == 6452) printf("\nok : test = %f // fspring = %f %f %f", FIter[ids.x].x, fSpring.x, fSpring.y, fSpring.z);
+        // if (ids.y == 6452) printf("\nok : test = %f // fspring = %f %f %f", FIter[ids.y].x, fSpring.x, fSpring.y, fSpring.z);
+        
 
     }
 
@@ -112,7 +105,7 @@ __global__ void updateIterBuffers(int maxTid, int N, float kOffset, float yOffse
     {
 
         float fixedFactor = 0.0;
-        if (i !=0)
+        if (true)
         {
             fixedFactor = 1.0;
         }
@@ -123,6 +116,21 @@ __global__ void updateIterBuffers(int maxTid, int N, float kOffset, float yOffse
         FIter[tid] = glm::vec3(0.0);
     }
 
+}
+
+__device__ glm::vec3 computeNormal(int tid, int i, int j, int N_m1, int N, glm::vec3 *x)
+{
+    glm::vec3 shear_vec1 = j == N_m1? x[tid] - x[tid-N] : x[tid+N] - x[tid]; // right vec
+    glm::vec3 shear_vec2 = i == 0? x[tid] - x[tid+1] : x[tid-1] - x[tid]; // up vec
+
+    glm::vec3 normal1 = normalize(cross(shear_vec1, shear_vec2));
+
+    glm::vec3 shear_vec3 = j == 0 ? x[tid] - x[tid+N] : x[tid - N] - x[tid]; // left vec
+    glm::vec3 shear_vec4 = i == N_m1 ?  x[tid] - x[tid-1] : x[tid+1] - x[tid]; // bottom vec
+
+    glm::vec3 normal2 = normalize(cross(shear_vec3, shear_vec4));
+
+    return normalize(0.5f*(normal1+normal2));
 }
 
 __global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *FIterAcc, glm::vec3 *n, float m, glm::vec3 absWind, glm::vec3 normWind, glm::vec3 gravity, float Ka)
@@ -136,22 +144,19 @@ __global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3
     {
         int N_m1 = N-1;
 
-        glm::vec3 shear_vec1 = j == N_m1? xIter[tid] - xIter[tid-N] : xIter[tid+N] - xIter[tid]; // right vec
-        glm::vec3 shear_vec2 = i == N_m1? xIter[tid-1] - xIter[tid] : xIter[tid] - xIter[tid+1]; // bottom up vec
-        glm::vec3 normal = cross(shear_vec1, shear_vec2);
+        glm::vec3 normal = computeNormal(tid, i, j, N_m1, N, xIter);
 
         n[tid] = normal;
 
 
-        FIter[tid] += dot(abs(normal), absWind)*normWind + gravity - Ka*vIter[tid]; // external forces : wind force + gravity force + friction force
+        FIter[tid] += dot(abs(normal), absWind) * normWind + gravity - Ka*vIter[tid]; // TODO add all external forces : wind force + gravity force + friction force
 
         FIterAcc[tid] += kOffset * FIter[tid];
-
-        
+        // if (tid == 6452) printf("\nFiter = %f %f %f", FIter[tid].x, FIter[tid].y, FIter[tid].z);
     }
 }
 
-__global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc, float h, float m)
+__global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc, glm::vec3 *collisionsFBuffer, float h, float m, bool *updatePt)
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
@@ -161,26 +166,30 @@ __global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm:
     if (tid < maxTid)
     {
 
-        // using Verlet integration scheme
-        glm::vec3 last_pos = x[tid];
-
-        if (i != 0) 
+        if (true)
         {
-            // RK4 
+            // RK4 scheme
+            // if (isnan(v[tid].x)) printf("\nNAN VEL // TID = %i // v = %f %f %f // F = %f %f %f // C = %f %f %f", tid, v[tid].x, v[tid].y, v[tid].z, FIterAcc[tid].x, FIterAcc[tid].y, FIterAcc[tid].z, collisionsFBuffer[tid].z, collisionsFBuffer[tid].y, collisionsFBuffer[tid].z);
+            // if (isnan(x[tid].x)) printf("\nNAN POS // TID = %i // v = %f %f %f // F = %f %f %f // C = %f %f %f", tid, v[tid].x, v[tid].y, v[tid].z, FIterAcc[tid].x, FIterAcc[tid].y, FIterAcc[tid].z, collisionsFBuffer[tid].z, collisionsFBuffer[tid].y, collisionsFBuffer[tid].z);
             x[tid] = x[tid] + h*vIterAcc[tid]/6.0f;
-            v[tid] = v[tid] + h*FIterAcc[tid]/(6.0f*m);
+            v[tid] += h*(FIterAcc[tid] + collisionsFBuffer[tid])/(6.0f*m);
+
+
         }
 
-        // reset buffers
-        FIterAcc[tid] = glm::vec3(0.0);
-        vIterAcc[tid] = glm::vec3(0.0);
+
+        if (tid == 33) printf("\nF = %f %f %f // collisions = %f %f %f", FIterAcc[tid].x, FIterAcc[tid].y, FIterAcc[tid].z, collisionsFBuffer[tid].x, collisionsFBuffer[tid].y, collisionsFBuffer[tid].z);
+        vIterAcc[tid] = glm::vec3(0.0f);
+        collisionsFBuffer[tid] = FIterAcc[tid];
+        FIterAcc[tid] = glm::vec3(0.0f);
+
     }
 
 }
 
 
 
-__global__ void initScheme(int maxTid, glm::vec3 *v, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc, int N)
+__global__ void initScheme(int maxTid, glm::vec3 *v, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc, bool *updatePt, int N)
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
@@ -195,6 +204,7 @@ __global__ void initScheme(int maxTid, glm::vec3 *v, glm::vec3 *xIter, glm::vec3
         vIter[tid] = glm::vec3(0.0);
         xIter[tid] = glm::vec3(0.0);
         FIterAcc[tid] = glm::vec3(0.0);
+        updatePt[tid] = true;
 
     }
 }
@@ -223,6 +233,7 @@ class ExplicitSolver: public Solver
     glm::vec3 m_gravity;
     float *m_windUI;
     float m_Ka;
+    bool m_correctSpring[4];
 
     int m_sqrtNRound;
 
@@ -292,12 +303,23 @@ class ExplicitSolver: public Solver
 
     void updateSpringForces(Plane *grid)
     {
-        std::cout << "\n\n UPDATE ==========!!!!!!!!!!!" << std::endl;
-
         for (int i=0; i<4; ++i)
         {
             SpringData spring = m_springs[i];
-            updateInternalForces<<<spring.gridSize, m_blockSize>>>(true, spring.indices.size(), spring.sqrtN, spring.indicesCudaPtr, m_xIter, m_vIter, m_FIter, spring.restLength, m_Ks, m_Kd);
+            updateInternalForces<<<spring.gridSize, m_blockSize>>>(
+                m_correctSpring[i], 
+                spring.indices.size(),  
+                grid->N(), 
+                spring.sqrtN, 
+                spring.indicesCudaPtr, 
+                m_xIter, 
+                m_vIter, 
+                m_FIter, 
+                spring.restLength, 
+                m_Ks, 
+                m_Kd
+            );
+
         }
         
         cudaErrorCheck(cudaDeviceSynchronize());
@@ -306,7 +328,7 @@ class ExplicitSolver: public Solver
 
     void updateRK4(Plane *grid, float kOffset, float yOffset)
     {
-
+        
         // INIT SUB ITERATION BUFFERS FOR POSITION AND VELOCITY (y = y + yOffset * k)
 
         updateIterBuffers<<<m_gridSizeScheme, m_blockSize>>>(
@@ -347,7 +369,6 @@ class ExplicitSolver: public Solver
 
     void runRK4Iterations(Plane *grid)
     {
-
         // compute k1, k2, k3 and k4 iterations of RK4 algorithm
         updateRK4(grid, 1.0, 0.0);
         updateRK4(grid, 2.0, m_timeStep*0.5);
@@ -355,6 +376,7 @@ class ExplicitSolver: public Solver
         updateRK4(grid, 1.0, m_timeStep);
 
     }
+
 
     public:
 
@@ -384,16 +406,22 @@ class ExplicitSolver: public Solver
             m_windUI[i] = m_wind[i];
         return m_windUI;
     };
+
+    glm::vec3 *getFBuffer() {return m_FIterAcc;};
     
 
-    ExplicitSolver(Plane *grid) : 
-    Solver(0.01f),
-    m_Ks(400.0), 
-    m_Kd(1.0), 
-    m_Ka(0.2), 
-    m_unitM(1.0), 
+    ExplicitSolver(
+        Plane *grid, 
+        bool *updatePt
+    ) : 
+    Solver(0.0012f),
+    m_Ks(230.0), 
+    m_Kd(10.0), 
+    m_Ka(0.1), 
+    m_unitM(0.20), 
     m_wind(glm::vec3(0.0f)),
-    m_gravity(glm::vec3(0.0f, -9.81f*m_unitM, 0.0f))
+    m_gravity(glm::vec3(0.0f, -9.81f*m_unitM, 0.0f)),
+    m_correctSpring({false, true, false, false})
     {
         m_windUI = new float[3]; 
         wind();
@@ -412,6 +440,14 @@ class ExplicitSolver: public Solver
         m_blockSize = dim3(32, 32, 1);
 
         // run cuda kernel
+        resetScheme(grid, updatePt);
+
+        // init spring data structure
+        initSprings(grid->N(), grid->L());
+    };  
+
+    void resetScheme(Plane *grid, bool *updatePt)
+    {
         initScheme<<<m_gridSizeScheme, m_blockSize>>>(
             grid->getVerticesNb(), 
             m_V, 
@@ -420,16 +456,13 @@ class ExplicitSolver: public Solver
             m_FIter, 
             m_vIterAcc, 
             m_FIterAcc, 
+            updatePt,
             grid->N()
             );
         cudaErrorCheck(cudaDeviceSynchronize());
-        // init spring data structure
-        initSprings(grid->N(), 1.0);
-    };  
+    }
 
-
-
-    void step(Plane *grid)
+    void step(Plane *grid, bool *updatePt, glm::vec3 *collisionsFBuffer)
     {
 
         runRK4Iterations(grid);
@@ -441,8 +474,10 @@ class ExplicitSolver: public Solver
             m_V,
             m_vIterAcc, 
             m_FIterAcc, 
+            collisionsFBuffer,
             m_timeStep, 
-            m_unitM
+            m_unitM,
+            updatePt
             );
         cudaErrorCheck(cudaDeviceSynchronize());
 
@@ -450,7 +485,6 @@ class ExplicitSolver: public Solver
 
     void updateWind()
     {
-        std::cout << "UPDATE WIND" << std::endl;
         for (int i = 0; i<3; ++i)
             m_wind[i] = m_windUI[i];
         m_windNormed = normalize(m_wind);
@@ -459,11 +493,10 @@ class ExplicitSolver: public Solver
 
     void updateGravity()
     {
-        std::cout << "UPDATE GRAVITY" << std::endl;
         m_gravity.y = -9.81*m_unitM;
     }
 
-
+    glm::vec3 *getVelocities() {return m_V;};
 };
 
 #endif

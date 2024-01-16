@@ -1,0 +1,465 @@
+#ifndef COLLISION_SOLVER_H
+#define COLLISION_SOLVER_H
+
+#include <vector>
+#include "mesh.hcu"
+#include "bvh.h"
+#include "cuda_utils.hcu"
+
+#define EPS 10e-5f
+#define MAX_STACK_SIZE 128
+#define MAX_SCENE_BOUNDS 100.0
+
+struct NodeInfo {
+    int index;
+    float distToBVH;
+};
+
+__device__ glm::vec3 interpolateNormal(Triangle &tri, glm::vec4 hitInfo)
+{
+    return hitInfo.x*tri.normal0 + hitInfo.y*tri.normal1 + hitInfo.z*tri.normal2;
+}
+
+
+__device__ void push(struct NodeInfo* stack, int *size, struct NodeInfo value)
+{
+    //printf("\nPUSHING NODE OF INDEX = %i && dist to bvh = %f at STACK INDEX = %i", value.index, value.distToBVH, *size);
+
+    stack[*size] = value;
+    *size = *size +1; 
+}
+
+__device__ struct NodeInfo pop(struct NodeInfo* stack, int *size)
+{
+    //printf("\nPUSHING NODE OF INDEX = %i && dist to bvh = %f at STACK INDEX = %i", value.index, value.distToBVH, *size);
+    *size = *size - 1;
+    return stack[*size];
+}
+
+__device__ float scalarTriple(glm::vec3 a, glm::vec3 b, glm::vec3 c)
+{
+    return dot(a, cross(b, c));
+}
+
+__device__ glm::vec3 computeIntersection(Triangle *triangles, int triIdx, glm::vec3 barycentric)
+{
+    Triangle &tri = triangles[triIdx];
+    return tri.p0*barycentric.x + tri.p1*barycentric.y +tri.p2*barycentric.z;
+}
+
+__device__ bool intersectRayTriangle(int i, int j, int tid, glm::vec3 origin, glm::vec3 dir, Triangle *triangles, GLuint triIdx, glm::vec4 *hitInfo, int *idx)
+{
+    /**
+     * Computes the intersection between the given ray and given triangle (if it exists)
+     * TODO redo test
+     * */
+    
+    glm::vec3 qp = -dir;
+
+    Triangle tri = triangles[triIdx];
+
+    glm::vec3 ab = (tri.p1 - tri.p0);
+    glm::vec3 ac = (tri.p2 - tri.p0);
+
+    glm::vec3 n = tri.normal; 
+    // if (tid==6580 && triIdx==0) printf("\n n = %f %f %f // ab =%f %f %f // ac =%f %f %f // p0 = %f %f %f // p1 = %f %f %f // p2 = %f %f %f ", n.x, n.y, n.z, ab.x, ab.y, ab.z, ac.x, ac.y, ac.z, tri.p0.x, tri.p0.y, tri.p0.z, tri.p1.x, tri.p1.y, tri.p1.z, tri.p2.x, tri.p2.y, tri.p2.z);
+    
+    float t, u, v, w;
+    
+    float det = dot(qp, n);
+    float res = dot(normalize(qp), normalize(n));
+    if (res < EPS) 
+    {
+        if (tid == 6580 && triIdx==0) printf("\n TID = %i 1// NOT INTERSECTING FOR ORIGIN = %f %f %f && dir = %f %f %f n = %f %f %f // res = %f", tid, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, n.x, n.y, n.z, res);
+        return false; // ray is parallel to or points away from triangle
+    }
+    
+    glm::vec3 ap = (origin - tri.p0);
+    t = dot(ap, n);
+    if (t < -EPS*det || t > 0.01*det || abs(t) >= abs((*hitInfo).w) ) // add test : 0.001 = PRECISION OF COLLISION TEST
+    {
+        if (tid == 6580 && triIdx==0) printf("\nTID = %i 2// NOT INTERSECTING FOR DIR = %f %f %f && ORIGIN = %f %f %f && tri id = %i && t = %f , hitInfoW = %f", tid, dir.x, dir.y, dir.z, origin.x, origin.y, origin.z, triIdx, t, (*hitInfo).w);
+        return false;
+    }
+
+    glm::vec3 e = cross(qp, ap); // scalar triple (pq, pa, pc)
+    v =  dot(ac, e);
+    if (v < -EPS || v - det > EPS) 
+    {
+        if (tid == 6580 && triIdx==0) printf("\n TID = %i 3// NOT INTERSECTING FOR ORIGIN = %f %f %f && triIdx = %i && ab = %f %f %f \n DATA :  v = %f // det = %f\n\n ", tid, origin.x, origin.y, origin.z, triIdx, ab.x, ab.y, ab.z, v, det);
+        return false; 
+    }
+
+    w = -dot(ab, e);
+    if (w < -EPS || w - det > EPS) 
+    {
+
+        if (tid == 6580 && triIdx==0) printf("\n TID = %i 4// NOT INTERSECTING FOR ORIGIN = %f %f %f && triIdx = %i // v = %f // w = %f // det = %f && ab = %f %f %f // ac = %f %f %f", tid, origin.x, origin.y, origin.z, triIdx, v, w, det, ab.x, ab.y, ab.z, ac.x, ac.y, ac.z);
+        return false;
+    }
+
+    u = det - v - w;
+    if (u < -EPS)
+    {   
+
+        if (tid == 6580 && triIdx==0) printf("\n TID = %i 5// NOT INTERSECTING FOR ORIGIN = %f %f %f // triIdx=%i \n v = %f // w = %f // det = %f", tid, origin.x, origin.y, origin.z, triIdx, v, w, det);
+        return false;
+    }
+    // printf("\n INDEX = %i // INTERSECTING FOR ORIGIN = %f %f %f && DIR = %f %f %f", triIdx, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z);
+
+    *idx = triIdx;
+
+    *hitInfo = glm::vec4(u, v, w, t)/det;
+
+    if (tid == 6580 && triIdx==0) printf("\n ------- HIT INFO // TID = %i// = %f %f %f %f\n", tid, (*hitInfo).x, (*hitInfo).y, (*hitInfo).z, (*hitInfo).w);
+    return true;
+
+}
+
+__device__ bool intersectRayAABB(int tid, glm::vec3 origin, glm::vec3 dir, glm::vec3 bbmin, glm::vec3 bbmax, float *tNear)
+{
+    /**
+     * Checks whether the current ray intersect the given AABB
+    */
+    
+    glm::vec3 sMin = (bbmin - origin)/dir;
+    glm::vec3 sMax = (bbmax - origin)/dir;
+
+    glm::vec3 tMin = min(sMin, sMax);
+    glm::vec3 tMax = max(sMin, sMax);
+
+    float tNewNear = 0.0;
+    float tFar = 100.0;
+
+    // float newtNear = max(max(tMin.x, tMin.y), tMin.z);
+    // float tFar = min(min(tMax.x, tMax.y), tMax.z);
+
+    for (int i =0; i<3; ++i) 
+    {
+        if (abs(dir[i]) < EPS)
+        {
+            if (origin[i] < bbmin[i] || origin[i] > bbmax[i]) {
+                return false;
+            }
+
+        }
+        else
+        {
+            tNewNear = max(tNewNear, tMin[i]);
+            tFar = min(tFar, tMax[i]);
+
+            if (tNewNear > tFar) 
+            {
+                return false;
+            }
+        }
+    }
+    *tNear = tNewNear;
+    
+    return true;
+    
+}
+
+__global__ void intersectBVHVelocity(int N, int maxTid, glm::vec3 *origins, glm::vec3 *dirs, Node *BVH, Triangle *triangles, GLuint *triIndices, int *triHit, glm::vec4 *hitPoint)
+{
+
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+
+    int hit = -10;
+
+
+    glm::vec3 dir = -dirs[tid];
+    glm::vec4 hitPt = glm::vec4(0.0f, 0.0f, 0.0f, 1e30f);
+    
+
+    if (tid < maxTid && dot(dir, dir) > EPS)
+    {
+        glm::vec3 origin = origins[tid];
+
+        // if (tid == 1950) printf("\ndir = %f %f %f", dir.x, dir.y, dir.z);
+
+        // printf("\ndir at id %i = %f %f %f && origin = %f %f %f",tid,  dir.x, dir.y, dir.z, origin.x, origin.y, origin.z);
+
+        int rootIndex = 0;
+        Node *currentNode = &BVH[rootIndex];
+
+        float tNear;
+        if (!intersectRayAABB(tid, origin, dir, currentNode->aabb.aabbMin, currentNode->aabb.aabbMax, &tNear)) 
+        {
+            hitPoint[tid] = hitPt;
+            triHit[tid] = hit;
+            return;
+        }
+
+        NodeInfo stack[MAX_STACK_SIZE];
+        int stackSize = 0;
+        
+        push(stack, &stackSize, NodeInfo {rootIndex, tNear});
+
+        while (stackSize != 0)
+        {
+            //printf("\nSTACK SIZE = %i", stackSize);
+            NodeInfo current = pop(stack, &stackSize);
+            currentNode = &BVH[current.index];
+
+            
+
+            if (current.distToBVH > MAX_SCENE_BOUNDS) continue;
+
+            if (currentNode->triCount != 0 ) // if the current node is a leaf node -> narrow phase
+            {
+                for (int k = 0; k < currentNode->triCount; k++)
+                {
+
+                    GLuint idx = triIndices[currentNode->leftIdx + k];
+                    intersectRayTriangle(i, j, tid, origin, dir, triangles, idx, &hitPt, &hit);
+                }
+            }
+            else
+            {
+                // getting children info
+                NodeInfo leftChildInfo = NodeInfo {currentNode->leftIdx, 0.0f };
+
+                Node *leftChild = &BVH[leftChildInfo.index];
+                bool hitLeftAABB = intersectRayAABB(tid, origin, dir, leftChild->aabb.aabbMin, leftChild->aabb.aabbMax, &leftChildInfo.distToBVH);
+
+                NodeInfo rightChildInfo = NodeInfo {currentNode->leftIdx+1, 0.0f};
+                Node *rightChild = &BVH[rightChildInfo.index];
+                bool hitRightAABB = intersectRayAABB(tid, origin, dir, rightChild->aabb.aabbMin, rightChild->aabb.aabbMax, &rightChildInfo.distToBVH);
+
+                // printf("\n LEFT NODE INFO =  %i && %f // RIGHT NODE INFO = %i && %f", leftChildInfo.index, leftChildInfo.distToBVH, rightChildInfo.index, rightChildInfo.distToBVH);
+
+                if (hitLeftAABB && hitRightAABB)
+                {   
+                    push(stack, &stackSize, leftChildInfo);
+                    push(stack, &stackSize, rightChildInfo);
+                }
+                else if (hitLeftAABB) 
+                {
+                    push(stack, &stackSize, leftChildInfo);
+                }
+                else if (hitRightAABB) 
+                {
+                    push(stack, &stackSize, rightChildInfo);
+                }
+            
+            }
+
+        }    
+    }
+    hitPoint[tid] = hitPt;
+    triHit[tid] = hit;
+}
+
+
+__global__ void updateVelocity(int N, int maxTid, glm::vec3 *color, glm::vec3 *pos, glm::vec3 *vel, glm::vec3 *OutFBuffer, Triangle *triangles, int *triHit, glm::vec4 *hitPoints,  bool *updatePt, float Kf, float Kd, float h, float unitM)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+
+    // printf("\ntid = %i && tri idx = %i", tid, triIdx);
+
+    int triIdx = triHit[tid];
+
+    glm::vec3 collisionF = glm::vec3(0.0f);
+
+    glm::vec3 c = glm::vec3(0.0f, 1.0f, 0.0f);
+    if (tid < maxTid)
+    {
+        if (triIdx > -1)
+        {
+            // TODO -> tangent & normal velocities => friction coef
+
+            glm::vec3 F = OutFBuffer[tid];
+
+            glm::vec3 hitPt = glm::vec3(hitPoints[tid].x, hitPoints[tid].y, hitPoints[tid].z);
+            glm::vec3 n = normalize(interpolateNormal(triangles[triIdx], hitPoints[tid]));
+
+            float Ncomp = dot(F,n);
+            glm::vec3 N = Ncomp*n;
+            glm::vec3 R = max(-Ncomp, 0.0f)*n;
+            
+            float normN = sqrt(dot(N, N));
+            
+            glm::vec3 T = F - N;
+            float normT = sqrt(dot(T, T));
+
+
+            glm::vec3 v = vel[tid];
+            glm::vec3 vT = v - dot(v,n)*n;
+            float normVt = sqrt(dot(vT, vT));
+
+            glm::vec3 friction = glm::vec3(0.0f); //tangential strength
+            
+            if (normVt > EPS) // kinetic friction
+            {
+                friction = -Kf*normN*normalize(vT); //  force of friction is always exerted in a direction that opposes movement (for kinetic friction)
+            } else { // static friction
+                //  force of friction is always exerted in a direction that opposes potential movement (for static friction)
+                friction = -T;
+                if (normT - Kf*normN > EPS)
+                {
+                    friction = Kf*normN*normalize(friction);
+                }
+            }
+            
+            if (dot(v, n) < -EPS) vel[tid] = vT;
+            
+            collisionF = R + friction;
+            glm::vec3 lastPos = pos[tid];
+            if (isnan(vel[tid].x) || isnan(pos[tid].x)) printf("PB tid = %i", tid);
+            // vel[tid] += h * collisionF/(unitM);
+
+            pos[tid] = computeIntersection(triangles, triIdx, hitPt)+0.01f*n;
+            if (isnan(vel[tid].x) || isnan(pos[tid].x)) printf("PB2 tid = %i", tid);
+            
+            // if (tid == 6580) {
+            //     printf("\n\n NComp =%f // n = %f %f %f \n// R = %f %f %f // lastPos = %f %f %f // new pos = %f %f %f", Ncomp, n.x, n.y, n.z, R.x, R.y, R.z, lastPos.x, lastPos.y, lastPos.z, pos[tid].x, pos[tid].y, pos[tid].z);
+            // }
+            
+            if (tid == 6580) printf("\n R = %f %f %f // T = %f %f %f // collisionF = %f %f %f // vel = %f %f %f", R.x, R.y, R.z, T.x, T.y, T.z, collisionF.x, collisionF.y, collisionF.z, v.x, v.y, v.z);
+            c = glm::vec3(1.0f, 1.0f, 0.0f);
+        }
+    
+    // color[tid] = c;
+    OutFBuffer[tid] = collisionF;
+    }
+}
+
+__global__ void initFBuffer(int maxTid, int N, glm::vec3 *Fbuffer)
+{
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+    int tid = j*N+i;
+    if (tid < maxTid)
+    {
+        Fbuffer[tid] = glm::vec3(0.0f);
+    }
+}
+
+struct Collider
+{
+    Mesh *colliderPtr;
+    BVH *bvh;
+
+    Node *treeCuda;
+    Triangle *trianglesCuda;
+    GLuint *triIndicesCuda;
+    
+    int *triHit;
+    glm::vec4 *interPos;
+
+    Collider(Mesh *ptr, unsigned int nbVertices) : colliderPtr(ptr)
+    {
+        bvh = new BVH(ptr);
+        // send bvh data to gpu
+        cudaErrorCheck(cudaMalloc((void **) &treeCuda, sizeof(Node)* (bvh->getNbNodes()) ));
+        cudaErrorCheck(cudaMemcpy(treeCuda, bvh->getTree(), sizeof(Node)  * bvh->getNbNodes(), cudaMemcpyHostToDevice));
+
+        cudaErrorCheck(cudaMalloc((void **) &trianglesCuda, sizeof(Triangle)* bvh->getNbTri() ));
+        cudaErrorCheck(cudaMemcpy(trianglesCuda, bvh->tri(), sizeof(Triangle) * bvh->getNbTri(), cudaMemcpyHostToDevice));
+
+        cudaErrorCheck(cudaMalloc((void **) &triIndicesCuda, sizeof(GLuint)*bvh->getNbtriIdx()));
+        cudaErrorCheck(cudaMemcpy(triIndicesCuda, bvh->triIndices(), sizeof(GLuint)* bvh->getNbtriIdx(), cudaMemcpyHostToDevice));
+
+        cudaErrorCheck(cudaMalloc((void **) &triHit, sizeof(int)*nbVertices));
+        cudaErrorCheck(cudaMalloc((void **) &interPos, sizeof(glm::vec4)*nbVertices));
+    }
+};
+
+class CollisionSolver
+{
+
+    public:
+    CollisionSolver(Plane *cloth) : m_verticesNb(cloth->getVerticesNb()), m_Kd(0.2), m_Kf(0.4) {
+        cudaErrorCheck(cudaMalloc((void **) &m_collisionsFBuffer, sizeof(glm::vec3)*m_verticesNb));
+
+        dim3 gridDim((cloth->N() + 31)/32, (cloth->N() + 31)/32, 1);
+        dim3 blockDim(32, 32, 1);
+
+        initFBuffer<<<gridDim, blockDim>>>(m_verticesNb, cloth->N(), m_collisionsFBuffer);
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+
+
+    };
+
+    void solve(Plane *cloth, glm::vec3 *v, bool *updatePt, glm::vec3 *FBuff, float h, float unitM, float Ks) 
+    {
+        //1 KERNEL CALL = update BVs
+
+        // 1 KERNEL CALL = cast rays from 2 directions : normals AND velocity vectorz
+        // resolve intersections (intersection AABB/AABB + primary test = ray/triangle intersection)
+        // -> fill a bool array saying whether there was a collision or not + another array of 3d vectors containing pt of intersection <?>
+        
+        
+        // 1 KERNEL CALL = add penalty force accordingly  ???
+
+        Collider collider = m_colliders[0];
+
+        dim3 gridDim((cloth->N() + 31)/32, (cloth->N() + 31)/32, 1);
+        dim3 blockDim(32, 32, 1);
+        // raytracing using velocity
+        intersectBVHVelocity<<<gridDim, blockDim>>>(
+            cloth->N(), 
+            cloth->getVerticesNb(), 
+            (glm::vec3 *) cloth->getDataPtr(0),
+            (glm::vec3 *) cloth->getDataPtr(1),
+            collider.treeCuda,
+            collider.trianglesCuda,
+            collider.triIndicesCuda,
+            collider.triHit,
+            collider.interPos
+        );
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+        updateVelocity<<<gridDim, blockDim>>>(
+            cloth->N(), 
+            cloth->getVerticesNb(), 
+            (glm::vec3 *) cloth->getDataPtr(3),
+            (glm::vec3 *) cloth->getDataPtr(0),
+            v,
+            m_collisionsFBuffer,
+            collider.trianglesCuda,
+            collider.triHit,
+            collider.interPos,
+            updatePt,
+            m_Kf,
+            m_Kd,
+            h,
+            unitM
+        );
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+
+    };
+
+    void addCollider(Mesh *collider)
+    {
+        m_colliders.push_back(Collider(collider, m_verticesNb));
+    };
+
+    float *Kf() {return &m_Kf;};
+    float *Kd() {return &m_Kd;};
+
+    glm::vec3 *collisionsFBuffer() {return m_collisionsFBuffer;};
+
+    private:
+
+    std::vector<Collider> m_colliders;
+
+    int m_verticesNb;
+
+    float m_Kf;
+    float m_Kd;
+
+    glm::vec3 *m_collisionsFBuffer;
+};
+
+#endif

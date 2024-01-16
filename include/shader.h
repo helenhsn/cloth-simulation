@@ -99,10 +99,16 @@ public:
         if (loc != -1.0) glUniform1f(loc, value);
     }
 
-    void setMat4(const std::string &name, glm::mat4 value)
+    void setMat4(const std::string &name, const glm::mat4 &value)
     {
         float loc = glGetUniformLocation(glid, name.c_str());
         if (loc != -1.0) glUniformMatrix4fv(loc, 1, GL_FALSE, &value[0][0]);
+    }
+
+    void setVec3(const std::string &name, const glm::vec3 &value)
+    {
+        float loc = glGetUniformLocation(glid, name.c_str());
+        if (loc != -1.0) glUniform3fv(loc, 1, &value[0]);
     }
 
 

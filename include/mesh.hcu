@@ -6,17 +6,28 @@
 #include "cuda_utils.hcu"
 #include "shader.h"
 #include "glm/glm.hpp"
+#include "glm/gtc/matrix_inverse.hpp"
 #include <iostream>
 #include <vector>
-#include "drawable.h"
 
-typedef struct Data 
+#define TINYPLY_IMPLEMENTATION
+
+#include "tinyply.hpp"
+#include "example-utils.hpp"
+
+using namespace tinyply;
+
+struct Data 
 {
     std::vector<glm::vec3> vertices;
     std::vector<glm::vec3> normals;
     std::vector<glm::vec2> uv;
+    std::vector<glm::vec3> color;
+
     std::vector<GLuint> indices;
-} Data;
+
+    glm::mat4x4 model;
+};
 
 class Mesh
 {
@@ -24,19 +35,20 @@ class Mesh
 private:
     GLuint m_glid;
     GLuint m_VAO = 0;
-    GLuint m_VBOs[3];
+    GLuint *m_VBOs;
     GLuint m_EBO = 0;
 
     int m_nbCudaVBOs = 0;
     float **m_dataPtrVBOs;
     cudaGraphicsResource_t *m_cudaResVBOs; // Cuda ptr that will point to OpenGL's VBOs
     
-    int m_VerticesNb;
-    int m_IndicesNb;
+    int m_verticesNb;
+    int m_indicesNb;
 
     GLenum m_primOpenGL;
-
+protected:
     Data m_data; // stocking data to reset mesh when needed
+
     
 
 public:
@@ -44,8 +56,10 @@ public:
     Mesh(GLint pgrmGLid, const Data &data, std::vector<bool> isCudaShared, GLenum prim = GL_TRIANGLES): m_data(data), m_glid(pgrmGLid), m_nbCudaVBOs(isCudaShared.size()), m_primOpenGL(prim)
     {
 
-        m_VerticesNb = data.vertices.size();
-        m_IndicesNb = data.indices.size();
+        m_verticesNb = data.vertices.size();
+        m_indicesNb = data.indices.size();
+
+        m_VBOs = new GLuint[m_nbCudaVBOs];
 
         glGenVertexArrays(1, &m_VAO);
         glBindVertexArray(m_VAO);
@@ -90,11 +104,26 @@ public:
         glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void *)0);
 
 
+        ///////////////// COLOR INITITIALIZATION /////////////////
+        glGenBuffers(1, &m_VBOs[3]);
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[3]);
+        glBufferData(GL_ARRAY_BUFFER, data.color.size()*sizeof(glm::vec3), data.color.data(), GL_STATIC_DRAW);
+        
+        loc = glGetAttribLocation(m_glid, "color");
+        if (loc < 0) 
+        {
+            std::cout << "Color attrib not found in shader : "  << m_glid << std::endl;
+        }
+        glEnableVertexAttribArray(loc);
+        glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
+        
+
+
         ///////////////// REGISTERING VERTICES VBO WITH CUDA <!> /////////////////
         m_cudaResVBOs = new cudaGraphicsResource_t[m_nbCudaVBOs];
         m_dataPtrVBOs = new float*[m_nbCudaVBOs];
         
-        for (int i = 0; i<3; i++)
+        for (int i = 0; i<m_nbCudaVBOs; i++)
         {
             m_dataPtrVBOs[i] = nullptr;
             m_cudaResVBOs[i] = nullptr;
@@ -106,6 +135,8 @@ public:
         glGenBuffers(1, &m_EBO);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, data.indices.size()*sizeof(GLuint), data.indices.data(), GL_STATIC_DRAW);
+
+        std::cout << "END CUDA / OPENGL BUFFERS INITIALIZATION ------------------\n\n" << std::endl;
     };
 
     ~Mesh() 
@@ -129,13 +160,16 @@ public:
         
         delete m_dataPtrVBOs;
         m_dataPtrVBOs = 0;
+
+        delete m_VBOs;
+        m_VBOs = 0;
     };
 
     void draw()
     {
         
         glBindVertexArray(m_VAO);
-        glDrawElements(m_primOpenGL,  m_IndicesNb, GL_UNSIGNED_INT, 0);
+        glDrawElements(m_primOpenGL,  m_indicesNb, GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     };
 
@@ -165,34 +199,77 @@ public:
         return m_glid;
     };
 
-    int getVerticesNb() {return m_VerticesNb;};
+    glm::mat4x4 getModel() {return m_data.model;};
+    int getVerticesNb() {return m_verticesNb;};
+    int getIndicesNb() {return m_indicesNb;};
+
+    std::vector<GLuint> &getIndices() {return m_data.indices;};
+    std::vector<glm::vec3> &getVertices() {return m_data.vertices;};
+    std::vector<glm::vec3> &getNormals() {return m_data.normals;};
 
     void setPrimOpenGL(GLenum prim) { m_primOpenGL = prim; };
 };
 
+void printMat3(const glm::mat4& matrix) {
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            std::cout << matrix[i][j] << "\t";
+        }
+        std::cout << std::endl;
+    }
+}
+
+void printMat4(const glm::mat4& matrix) {
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            std::cout << matrix[i][j] << "\t";
+        }
+        std::cout << std::endl;
+    }
+}
+float getDeterminant(const glm::mat3 &m)
+{
+    return 
+			+ m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+			- m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+			+ m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+}
 
 class Plane: public Mesh 
 {
 
     public:
-    Plane(GLint pgrmGLid, int size_edge=128, std::vector<bool> shared = {true, true, false}): Mesh(pgrmGLid, Plane::init_mesh(size_edge), shared), m_N(size_edge)
+    Plane(GLint pgrmGLid, glm::mat4x4 &model, int size_edge=4, std::vector<bool> shared = {true, true, false, true}): Mesh(pgrmGLid, Plane::init_mesh(size_edge, model), shared), m_N(size_edge)
     {}
 
-    static Data init_mesh(int &N_) {
+    static Data init_mesh(int &N_, glm::mat4x4 &model) {
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec2> uv;
+        std::vector<glm::vec3> color;
         std::vector<GLuint> indices;
     
+        glm::mat3x3 modelMatrix3(model);
 
+        glm::mat3x3 normalMatrix = getDeterminant(modelMatrix3) != 0.0 ? glm::inverseTranspose(modelMatrix3) : glm::mat3(1.0f);
+        glm::vec3 n = normalMatrix * glm::vec3(0.0f, 1.0f, 0.0f);
+
+        printf("normal = %f %f %f", n.x, n.y, n.z);
         for (int j = 0; j < N_; j++)
         {
             for (int i = 0; i<N_; i++)
             {
                 // filling the buffers column-wise <!> => buff = [column1, column 2, column3...]
-                vertices.push_back(glm::vec3((float) j, 0, (float) i));
-                normals.push_back(glm::vec3(0.0, 1.0, 0.0));
+                glm::vec4 v = glm::vec4((float) j, 0, (float) i, 1.0);
+                glm::vec3 v3 = glm::vec3(model*v);
+                vertices.push_back(v3);
+                normals.push_back(n);
                 uv.push_back(glm::vec2((float) i/N_, (float) j/N_));
+
+                if ((j*N_+i)==6580) {
+                    color.push_back(glm::vec3(0.0f, 0.0f, 1.0f));
+                }
+                else color.push_back(glm::vec3(0.0f, 1.0f, 0.0f));
             }
         }
 
@@ -217,30 +294,28 @@ class Plane: public Mesh
             }
         }
 
-
-        Data new_data = {vertices, normals, uv, indices}; 
+        Data new_data = {vertices, normals, uv, color, indices, model}; 
         return new_data;
     };
 
     unsigned int N() {return m_N;};
 
+    float L() {return abs(m_data.vertices[0].z - m_data.vertices[1].z);;};
+
     unsigned int *ptrN() {return &m_N;};
 
     private:
     unsigned int m_N;
+    float m_L;
 };
 
 class Sphere : public Mesh 
 {
-    private:
-    float m_radius;
 
     public:
 
-    Sphere(GLint pgrmGLid, std::vector<bool> shared = {true, false, false}): 
-    Mesh(pgrmGLid, Sphere::init_mesh(), shared), 
-    m_radius(10.0f)
-    {}
+    Sphere(GLint pgrmGLid, glm::mat4x4 &model, float radius, std::vector<bool> shared = {true, false, false}): 
+    Mesh(pgrmGLid, Sphere::init_mesh(model, radius), shared)    {}
     
     static glm::vec3 spherical_coords(float &r, float &th, float &phi)
     {
@@ -249,15 +324,14 @@ class Sphere : public Mesh
         return glm::vec3(r*cos_phi*cos(th), r*sin(phi), r*cos_phi*sin(th));
     }
 
-    float radius() {return m_radius;};
 
-    static Data init_mesh()
+    static Data init_mesh(glm::mat4x4 &model, float r)
     {
-        float r = 10.0f;
-        int rowCount = 50;
-        int columnCount = 50;
+        int rowCount = 30;
+        int columnCount = 30;
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
+        std::vector<glm::vec3> color;
         std::vector<glm::vec2> uv;
         std::vector<GLuint> indices;
         float PI = 3.14159265;
@@ -267,7 +341,9 @@ class Sphere : public Mesh
         float phi = PI/2.0;
         float th = 0.0;
 
+        glm::mat3x3 modelMatrix3(model);
 
+        glm::mat3x3 normalMatrix = getDeterminant(modelMatrix3) != 0.0 ? glm::inverseTranspose(modelMatrix3) : glm::mat3(1.0f);
         
         for (int i=0; i<rowCount-1; i++)
         {
@@ -276,21 +352,32 @@ class Sphere : public Mesh
             for (int j = 0; j<columnCount; j++)
             {
                 // inserting each vertex one time
-                vertices.push_back(Sphere::spherical_coords(r, th, phi));
-                normals.push_back(Sphere::spherical_coords(r, th, phi)); // n = OM vector
+                glm::vec4 v = glm::vec4(Sphere::spherical_coords(r, th, phi), 1.0);
+                vertices.push_back(glm::vec3(model * v));
+                normals.push_back(normalMatrix * Sphere::spherical_coords(r, th, phi)); // n = OM vector
                 uv.push_back(glm::vec2(1.0 - phi/PI, th/(2.0*PI)));
                 th += ratio_column;
+                color.push_back(glm::vec3(0.8, 0.0, 0.8));
             }
         }
-        vertices.push_back(glm::vec3(0.0, -r, 0.0)); // bottom vertex
-        vertices.push_back(glm::vec3(0.0, r, 0.0)); // top vertex
+        glm::vec4 vBottomCenter = glm::vec4(0.0, -r, 0.0, 1.0);
+        vertices.push_back(glm::vec3(model * vBottomCenter));
+        normals.push_back(normalMatrix * glm::vec3(0.0f, -1.0f, 0.0f)); // n = OM vector
+
+        color.push_back(glm::vec3(0.8, 0.0, 0.8));
+
+        glm::vec4 vTopCenter = glm::vec4(0.0, r, 0.0, 1.0);
+        vertices.push_back(glm::vec3(model * vTopCenter));
+        normals.push_back(normalMatrix * glm::vec3(0.0f, 1.0f, 0.0f)); // n = OM vector
+        color.push_back(glm::vec3(0.8, 0.0, 0.8));
+
 
 
         // top and bottom single triangles
         int top_vtx = vertices.size() - 1;
         int bottom_vtx = vertices.size() - 2;
         int b_idx = bottom_vtx - columnCount;
-        int modulo = (columnCount-1)*(columnCount-1);
+
         for (int k = 0; k<columnCount; k++)
         {
             indices.push_back((k+1)%columnCount);
@@ -323,8 +410,148 @@ class Sphere : public Mesh
             }
         }
 
-        Data new_data = {vertices, normals, uv, indices}; 
+        Data new_data = {vertices, normals, uv, color, indices, model}; 
         return new_data;
+    }
+};
+
+
+class MeshFromPLY: public Mesh
+{
+    public:
+
+    MeshFromPLY(GLint pgrmGLid, glm::mat4x4 &model, const char *filename, std::vector<bool> shared = {true, false, false, false}): 
+    Mesh(pgrmGLid, MeshFromPLY::init_mesh(model, filename), shared)    {}
+    
+    static Data init_mesh(glm::mat4x4 &model, const std::string & filepath, const bool preload_into_memory = true)
+    {
+        std::cout << "........................................................................\n";
+        std::cout << "Now Reading: " << filepath << std::endl;
+
+        std::unique_ptr<std::istream> file_stream;
+        std::vector<uint8_t> byte_buffer;
+
+        try
+        {
+            // For most files < 1gb, pre-loading the entire file upfront and wrapping it into a 
+            // stream is a net win for parsing speed, about 40% faster. 
+            if (preload_into_memory)
+            {
+                byte_buffer = read_file_binary(filepath);
+                file_stream.reset(new memory_stream((char*)byte_buffer.data(), byte_buffer.size()));
+            }
+            else
+            {
+                file_stream.reset(new std::ifstream(filepath, std::ios::binary));
+            }
+
+            if (!file_stream || file_stream->fail()) throw std::runtime_error("file_stream failed to open " + filepath);
+
+            file_stream->seekg(0, std::ios::end);
+            const float size_mb = file_stream->tellg() * float(1e-6);
+            file_stream->seekg(0, std::ios::beg);
+
+            PlyFile file;
+            file.parse_header(*file_stream);
+
+            std::cout << "\t[ply_header] Type: " << (file.is_binary_file() ? "binary" : "ascii") << std::endl;
+            for (const auto & c : file.get_comments()) std::cout << "\t[ply_header] Comment: " << c << std::endl;
+            for (const auto & c : file.get_info()) std::cout << "\t[ply_header] Info: " << c << std::endl;
+
+            for (const auto & e : file.get_elements())
+            {
+                std::cout << "\t[ply_header] element: " << e.name << " (" << e.size << ")" << std::endl;
+                for (const auto & p : e.properties)
+                {
+                    std::cout << "\t[ply_header] \tproperty: " << p.name << " (type=" << tinyply::PropertyTable[p.propertyType].str << ")";
+                    if (p.isList) std::cout << " (list_type=" << tinyply::PropertyTable[p.listType].str << ")";
+                    std::cout << std::endl;
+                }
+            }
+
+            // Because most people have their own mesh types, tinyply treats parsed data as structured/typed byte buffers. 
+            // See examples below on how to marry your own application-specific data structures with this one. 
+            std::shared_ptr<PlyData> vertices, normals, colors, texcoords, faces;
+
+            // The header information can be used to programmatically extract properties on elements
+            // known to exist in the header prior to reading the data. For brevity of this sample, properties 
+            // like vertex position are hard-coded: 
+            try { vertices = file.request_properties_from_element("vertex", { "x", "y", "z" }); }
+            catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
+
+            try { normals = file.request_properties_from_element("vertex", { "nx", "ny", "nz" }); }
+            catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
+
+            try { colors = file.request_properties_from_element("vertex", { "red", "green", "blue", "alpha" }); }
+            catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
+
+            try { colors = file.request_properties_from_element("vertex", { "r", "g", "b", "a" }); }
+            catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
+
+            try { texcoords = file.request_properties_from_element("vertex", { "u", "v" }); }
+            catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
+
+            // Providing a list size hint (the last argument) is a 2x performance improvement. If you have 
+            // arbitrary ply files, it is best to leave this 0. 
+            try { faces = file.request_properties_from_element("face", { "vertex_indices" }, 3); }
+            catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
+
+
+            file.read(*file_stream);
+
+            if (vertices)   std::cout << "\tRead " << vertices->count  << " total vertices "<< std::endl;
+            if (normals)    std::cout << "\tRead " << normals->count   << " total vertex normals " << std::endl;
+            if (colors)     std::cout << "\tRead " << colors->count << " total vertex colors " << std::endl;
+            if (texcoords)  std::cout << "\tRead " << texcoords->count << " total vertex texcoords " << std::endl;
+            if (faces)      std::cout << "\tRead " << faces->count     << " total faces (triangles) " << std::endl;
+
+            {
+                std::vector<glm::vec3> col;
+                std::vector<glm::vec2> uv;
+                std::vector<GLuint> indices;
+                std::vector<glm::vec3> norms;
+
+                const size_t numVerticesBytes = vertices->buffer.size_bytes();
+                std::vector<glm::vec3> verts(vertices->count);
+                std::memcpy(verts.data(), vertices->buffer.get(), numVerticesBytes);
+
+                const size_t numNormalsBytes = normals->buffer.size_bytes();
+                std::vector<glm::vec3> normsV(normals->count);
+                std::memcpy(normsV.data(), normals->buffer.get(), numNormalsBytes);
+
+                const size_t facesBytes = faces->buffer.size_bytes();
+                std::vector<glm::ivec3> index(faces->count);
+                std::memcpy(index.data(), faces->buffer.get(), facesBytes);
+
+                glm::mat3x3 modelMatrix3(model);
+
+                glm::mat3x3 normalMatrix = getDeterminant(modelMatrix3) != 0.0 ? glm::inverseTranspose(modelMatrix3) : glm::mat3(1.0f);
+                
+                for(int i = 0; i<verts.size(); ++i)
+                {
+                    glm::vec4 v = glm::vec4(verts[i], 1.0);
+                    verts[i] = glm::vec3(model * v);
+                    normsV[i] = normalMatrix * normsV[i];
+                    col.push_back(glm::vec3(0.8, 0.0, 0.8));
+                }
+                for (int i=0; i<index.size(); ++i)
+                {
+                    glm::ivec3 currFace = index[i];
+
+                    indices.push_back(GLuint(currFace[0]));
+                    indices.push_back(GLuint(currFace[1]));
+                    indices.push_back(GLuint(currFace[2]));
+                }
+
+                Data new_data = {verts, norms, uv, col, indices, model}; 
+                return new_data;
+
+            }
+        }
+        catch (const std::exception & e)
+        {
+            std::cerr << "Caught tinyply exception: " << e.what() << std::endl;
+        }
     }
 };
 

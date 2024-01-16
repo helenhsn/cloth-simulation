@@ -1,4 +1,27 @@
+#ifndef CUDA_UTILS_H
+#define CUDA_UTILS_H
+
+#include "glm/glm.hpp"
+
 #include <iostream>
+
+
+extern __device__ __host__ float dot(glm::vec3 a, glm::vec3 b)
+{
+    return a.x*b.x + a.y*b.y + a.z*b.z;
+}
+
+
+extern __device__ __host__ glm::vec3 normalize(glm::vec3 v)
+{
+    float res = dot(v, v);
+    if (res < 0.0000001) return v;
+    return v/sqrt(res);
+}
+extern __device__ __host__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
+{
+    return  glm::vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
+}
 
 extern __host__ void cudaErrorCheck(cudaError_t err)
 {
@@ -21,3 +44,4 @@ extern __host__ void unbindBuffer(cudaGraphicsResource_t res)
     cudaErrorCheck(cudaGraphicsUnmapResources(1, &res, 0));
 }
 
+#endif

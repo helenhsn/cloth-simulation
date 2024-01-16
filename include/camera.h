@@ -20,7 +20,7 @@ enum Camera_Movement {
 // Default camera values
 const float YAW         = -90.0f;
 const float PITCH       = 0.0f;
-const float SPEED       =  200.0f;
+const float SPEED       =  20.0f;
 const float SENSITIVITY =  0.10f;
 const float ZOOM        =  30.0f;
 
@@ -40,6 +40,8 @@ public:
         updateCameraVectors();
     }
 
+    glm::vec3 pos() {return m_pos;};
+    
     // returns the view matrix calculated using Euler Angles and the LookAt Matrix
     glm::mat4 viewMatrix()
     {

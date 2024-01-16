@@ -19,7 +19,7 @@ void keyboard_callback(GLFWwindow *window);
 
 
 //Camera camera(glm::vec3(21.8819, 20.3187, 83.4559));
-Camera camera(glm::vec3(100.0, 200., 700.0));
+Camera camera(glm::vec3(10.0, 20., 50.0));
 
 float dt = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;
@@ -66,25 +66,46 @@ int main()
 
     // setting simulation objects (drawables)
     ShaderProgram ground_pgrm("../shaders/ground.vs", "../shaders/ground.fs");
-    ShaderProgram sphere_pgrm("../shaders/sphere.vs", "../shaders/sphere.fs");
+    ShaderProgram simple_pgrm("../shaders/sphere.vs", "../shaders/sphere.fs");
     ShaderProgram cloth_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
 
-    Plane *cloth = new Plane(cloth_pgrm.glid, 128);
-    Plane *ground = new Plane(ground_pgrm.glid, 500, {false, false, false});
+
+    glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.05f, 1.0f, 0.05f));
+    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 8.0f, 0.0f));
+    Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 128);
+    
+    glm::mat4x4 modelGround = glm::scale(glm::mat4(1.0f), 5.0f*glm::vec3(1.0f, 0.0f, 1.0f));
+    modelGround = glm::translate(modelGround, -50.0f*glm::vec3(1.0f, 0.0f, 1.0f));
+    Plane *ground = new Plane(ground_pgrm.glid, modelGround, 500, {false, false, false});
     ground->setPrimOpenGL(GL_LINES);
-    Sphere *sphere = new Sphere(sphere_pgrm.glid);
+    
+    glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 5.0f, 3.0f));
+    Sphere *sphere = new Sphere(simple_pgrm.glid, modelSphere, 2.0);
     Simulation *sim = new Simulation(cloth);
+
+    glm::mat4 rot = glm::rotate(glm::mat4(1.0f), -3.14159266f/2.0f, glm::vec3(1.0f, 0.0f, 0.0f));
+    glm::mat4 scal = glm::scale(glm::mat4(1.0f), 0.1f*glm::vec3(1.0f, 1.0f, 1.0f));
+    //glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, -10.0f, 5.0f));
+    glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, -3.0f, 8.0f));
+    glm::mat4 modelCollider = trans*rot*scal;
+    
+
+    glm::mat4 modelSimpleCollider = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 8.0f, 2.0f));
+    Plane *simpleCollider = new Plane(simple_pgrm.glid, modelSimpleCollider, 10);
+    
+    MeshFromPLY *anotherCollider = new MeshFromPLY(simple_pgrm.glid, modelCollider, "../assets/bunny_low.ply");
+
+
     sim->addCollider(sphere);
 
-    // Init GUI (imgui window)
-    GUI *gui = new GUI(window); 
 
-    
+    // Init GUI (imgui window)
+    GUI *gui = new GUI(window);    
 
     // Rendering options
     glEnable(GL_DEPTH_TEST);
-    //glEnable(GL_CULL_FACE);
-    //glCullFace(GL_BACK);
+    // glEnable(GL_CULL_FACE);
+    // glCullFace(GL_BACK);
 
     while (!glfwWindowShouldClose(window))
     {
@@ -106,31 +127,30 @@ int main()
         glm::mat4 projection = camera.projectionMatrix(w_width, w_height);
         glm::mat4 view = camera.viewMatrix();
 
-        sphere_pgrm.use();
-        sphere_pgrm.setMat4("projection", projection);
-        sphere_pgrm.setMat4("view", view);
-        glm::mat4 model = glm::scale(glm::mat4(1.0f), glm::vec3(5.0f));        
-        sphere_pgrm.setMat4("model", model);
-        glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
+        simple_pgrm.use();
+        simple_pgrm.setMat4("projection", projection);
+        simple_pgrm.setMat4("view", view);        
+        simple_pgrm.setMat4("model", glm::mat4(1.0f));
+        simple_pgrm.setVec3("camera_pos", camera.pos());
+        GLenum wireframeMode = gui->colliderWireframe ? GL_LINE : GL_FILL;
+        glPolygonMode(GL_FRONT_AND_BACK,  wireframeMode);
         sphere->draw();
 
         ground_pgrm.use();
         ground_pgrm.setMat4("projection", projection);
         ground_pgrm.setMat4("view", view);
-        model = glm::scale(glm::mat4(1.0f), 25.0f*glm::vec3(1.0f, 0.0f, 1.0f));
-        model = glm::translate(model, -250.0f*glm::vec3(1.0f, 0.0f, 1.0f));
-        ground_pgrm.setMat4("model", model);
+        ground_pgrm.setMat4("model", glm::mat4(1.0f));
         glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
         ground->draw(); 
 
         cloth_pgrm.use();
         cloth_pgrm.setMat4("projection", projection);
         cloth_pgrm.setMat4("view", view);
-        model = glm::scale(glm::mat4(1.0), glm::vec3(2.0f));
-        model = glm::translate(model, glm::vec3(0.0f, 100.0f, 0.0f));
-        cloth_pgrm.setMat4("model", model);
+        cloth_pgrm.setMat4("model", glm::mat4(1.0f));
+        simple_pgrm.setVec3("camera_pos", camera.pos());
 
-        glPolygonMode(GL_FRONT_AND_BACK,  GL_LINE);
+        wireframeMode = gui->clothWireframe ? GL_LINE : GL_FILL;
+        glPolygonMode(GL_FRONT_AND_BACK,  wireframeMode);
         cloth->draw();
 
         gui->buildWindow(sim, cloth); // TODO delete cast when implementing Implicit Solver <!>
