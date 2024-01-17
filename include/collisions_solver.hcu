@@ -41,10 +41,9 @@ __device__ float scalarTriple(glm::vec3 a, glm::vec3 b, glm::vec3 c)
     return dot(a, cross(b, c));
 }
 
-__device__ glm::vec3 computeIntersection(Triangle *triangles, int triIdx, glm::vec3 barycentric)
+__device__ glm::vec3 computeIntersection(Triangle &tri, int triIdx, glm::vec4 infos, glm::vec3 dir)
 {
-    Triangle &tri = triangles[triIdx];
-    return tri.p0*barycentric.x + tri.p1*barycentric.y +tri.p2*barycentric.z;
+    return tri.p0*infos.x + tri.p1*infos.y +tri.p2*infos.z + infos.w*dir;
 }
 
 __device__ bool intersectRayTriangle(int i, int j, int tid, glm::vec3 origin, glm::vec3 dir, Triangle *triangles, GLuint triIdx, glm::vec4 *hitInfo, int *idx)
@@ -76,7 +75,7 @@ __device__ bool intersectRayTriangle(int i, int j, int tid, glm::vec3 origin, gl
     
     glm::vec3 ap = (origin - tri.p0);
     t = dot(ap, n);
-    if (t < -EPS*det || t > 0.01*det || abs(t) >= abs((*hitInfo).w) ) // add test : 0.001 = PRECISION OF COLLISION TEST
+    if (t < -EPS*det || t > 0.2*det || abs(t) >= abs((*hitInfo).w) ) // add test : 0.001 = PRECISION OF COLLISION TEST
     {
         if (tid == 6580 && triIdx==0) printf("\nTID = %i 2// NOT INTERSECTING FOR DIR = %f %f %f && ORIGIN = %f %f %f && tri id = %i && t = %f , hitInfoW = %f", tid, dir.x, dir.y, dir.z, origin.x, origin.y, origin.z, triIdx, t, (*hitInfo).w);
         return false;
@@ -109,7 +108,9 @@ __device__ bool intersectRayTriangle(int i, int j, int tid, glm::vec3 origin, gl
 
     *idx = triIdx;
 
-    *hitInfo = glm::vec4(u, v, w, t)/det;
+    glm::vec4 infos = glm::vec4(u, v, w, t)/det;
+
+    *hitInfo = glm::vec4(computeIntersection(tri, triIdx, infos, qp), infos.w);
 
     if (tid == 6580 && triIdx==0) printf("\n ------- HIT INFO // TID = %i// = %f %f %f %f\n", tid, (*hitInfo).x, (*hitInfo).y, (*hitInfo).z, (*hitInfo).w);
     return true;
@@ -278,7 +279,7 @@ __global__ void updateVelocity(int N, int maxTid, glm::vec3 *color, glm::vec3 *p
             glm::vec3 F = OutFBuffer[tid];
 
             glm::vec3 hitPt = glm::vec3(hitPoints[tid].x, hitPoints[tid].y, hitPoints[tid].z);
-            glm::vec3 n = normalize(interpolateNormal(triangles[triIdx], hitPoints[tid]));
+            glm::vec3 n = normalize(triangles[triIdx].normal);
 
             float Ncomp = dot(F,n);
             glm::vec3 N = Ncomp*n;
@@ -310,12 +311,12 @@ __global__ void updateVelocity(int N, int maxTid, glm::vec3 *color, glm::vec3 *p
             
             if (dot(v, n) < -EPS) vel[tid] = vT;
             
-            collisionF = R + friction;
+            collisionF = R*1.1f + friction;
             glm::vec3 lastPos = pos[tid];
             if (isnan(vel[tid].x) || isnan(pos[tid].x)) printf("PB tid = %i", tid);
             // vel[tid] += h * collisionF/(unitM);
 
-            pos[tid] = computeIntersection(triangles, triIdx, hitPt)+0.01f*n;
+            pos[tid] = hitPt+ 0.001f*n;
             if (isnan(vel[tid].x) || isnan(pos[tid].x)) printf("PB2 tid = %i", tid);
             
             // if (tid == 6580) {
@@ -326,7 +327,7 @@ __global__ void updateVelocity(int N, int maxTid, glm::vec3 *color, glm::vec3 *p
             c = glm::vec3(1.0f, 1.0f, 0.0f);
         }
     
-    // color[tid] = c;
+    color[tid] = c;
     OutFBuffer[tid] = collisionF;
     }
 }

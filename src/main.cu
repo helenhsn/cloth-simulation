@@ -84,9 +84,9 @@ int main()
     Simulation *sim = new Simulation(cloth);
 
     glm::mat4 rot = glm::rotate(glm::mat4(1.0f), -3.14159266f/2.0f, glm::vec3(1.0f, 0.0f, 0.0f));
-    glm::mat4 scal = glm::scale(glm::mat4(1.0f), 0.1f*glm::vec3(1.0f, 1.0f, 1.0f));
+    glm::mat4 scal = glm::scale(glm::mat4(1.0f), 0.05f*glm::vec3(1.0f, 1.0f, 1.0f));
     //glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, -10.0f, 5.0f));
-    glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, -3.0f, 8.0f));
+    glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 0.0f, 4.0f));
     glm::mat4 modelCollider = trans*rot*scal;
     
 
@@ -96,7 +96,7 @@ int main()
     MeshFromPLY *anotherCollider = new MeshFromPLY(simple_pgrm.glid, modelCollider, "../assets/bunny_low.ply");
 
 
-    sim->addCollider(sphere);
+    sim->addCollider(anotherCollider);
 
 
     // Init GUI (imgui window)
@@ -134,7 +134,7 @@ int main()
         simple_pgrm.setVec3("camera_pos", camera.pos());
         GLenum wireframeMode = gui->colliderWireframe ? GL_LINE : GL_FILL;
         glPolygonMode(GL_FRONT_AND_BACK,  wireframeMode);
-        sphere->draw();
+        anotherCollider->draw();
 
         ground_pgrm.use();
         ground_pgrm.setMat4("projection", projection);

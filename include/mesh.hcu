@@ -543,7 +543,7 @@ class MeshFromPLY: public Mesh
                     indices.push_back(GLuint(currFace[2]));
                 }
 
-                Data new_data = {verts, norms, uv, col, indices, model}; 
+                Data new_data = {verts, normsV, uv, col, indices, model}; 
                 return new_data;
 
             }
