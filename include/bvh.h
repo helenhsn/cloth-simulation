@@ -104,7 +104,7 @@ class BVH
         std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() -start;
         std::cout << "BVH built in " << elapsed_seconds.count() << "s -------------------- \n\n";
 
-        printTree(0);
+        // printTree(0);
 
     }
 
@@ -190,12 +190,15 @@ class BVH
 
         for (int axis = 0; axis<3; ++axis)
         {
-            for (int offsetTriIdx = 0; offsetTriIdx<node.triCount; ++offsetTriIdx)
+            float AABBmin = node.aabb.aabbMin[axis];
+            float AABBmax = node.aabb.aabbMax[axis];
+            float step = (AABBmax - AABBmin)/99.0;
+
+            for (int k = 0; k<100; ++k)
             {
-                Triangle &tri = m_triangles[m_triIndices[node.leftIdx + offsetTriIdx]];
 
                 // testing one axis per triangle in the current node
-                currentPos = tri.centroid[axis];
+                currentPos = AABBmin + k * step;
                 currentCost = evaluateCost(node, axis, currentPos);
                 if (currentCost < minCost)
                 {

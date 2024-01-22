@@ -7,7 +7,7 @@
 #include "cuda_utils.hcu"
 
 #define EPS 10e-5f
-#define MAX_STACK_SIZE 128
+#define MAX_STACK_SIZE 64
 #define MAX_SCENE_BOUNDS 100.0
 
 struct NodeInfo {
@@ -34,11 +34,6 @@ __device__ struct NodeInfo pop(struct NodeInfo* stack, int *size)
     //printf("\nPUSHING NODE OF INDEX = %i && dist to bvh = %f at STACK INDEX = %i", value.index, value.distToBVH, *size);
     *size = *size - 1;
     return stack[*size];
-}
-
-__device__ float scalarTriple(glm::vec3 a, glm::vec3 b, glm::vec3 c)
-{
-    return dot(a, cross(b, c));
 }
 
 __device__ glm::vec3 computeIntersection(Triangle &tri, int triIdx, glm::vec4 infos, glm::vec3 dir)
@@ -75,7 +70,7 @@ __device__ bool intersectRayTriangle(int i, int j, int tid, glm::vec3 origin, gl
     
     glm::vec3 ap = (origin - tri.p0);
     t = dot(ap, n);
-    if (t < -EPS*det || t > 0.2*det || abs(t) >= abs((*hitInfo).w) ) // add test : 0.001 = PRECISION OF COLLISION TEST
+    if (t < -EPS*det || t > 0.08*det || abs(t) >= abs((*hitInfo).w) ) // add test : 0.001 = PRECISION OF COLLISION TEST
     {
         if (tid == 6580 && triIdx==0) printf("\nTID = %i 2// NOT INTERSECTING FOR DIR = %f %f %f && ORIGIN = %f %f %f && tri id = %i && t = %f , hitInfoW = %f", tid, dir.x, dir.y, dir.z, origin.x, origin.y, origin.z, triIdx, t, (*hitInfo).w);
         return false;
@@ -112,7 +107,7 @@ __device__ bool intersectRayTriangle(int i, int j, int tid, glm::vec3 origin, gl
 
     *hitInfo = glm::vec4(computeIntersection(tri, triIdx, infos, qp), infos.w);
 
-    if (tid == 6580 && triIdx==0) printf("\n ------- HIT INFO // TID = %i// = %f %f %f %f\n", tid, (*hitInfo).x, (*hitInfo).y, (*hitInfo).z, (*hitInfo).w);
+    //printf("\n ------- HIT INFO forTID = %i // hit info = %f %f %f %f\n", tid, (*hitInfo).x, (*hitInfo).y, (*hitInfo).z, (*hitInfo).w);
     return true;
 
 }
@@ -131,9 +126,6 @@ __device__ bool intersectRayAABB(int tid, glm::vec3 origin, glm::vec3 dir, glm::
 
     float tNewNear = 0.0;
     float tFar = 100.0;
-
-    // float newtNear = max(max(tMin.x, tMin.y), tMin.z);
-    // float tFar = min(min(tMax.x, tMax.y), tMax.z);
 
     for (int i =0; i<3; ++i) 
     {
@@ -161,7 +153,7 @@ __device__ bool intersectRayAABB(int tid, glm::vec3 origin, glm::vec3 dir, glm::
     
 }
 
-__global__ void intersectBVHVelocity(int N, int maxTid, glm::vec3 *origins, glm::vec3 *dirs, Node *BVH, Triangle *triangles, GLuint *triIndices, int *triHit, glm::vec4 *hitPoint)
+__global__ void intersectBVHVelocity(int N, int maxTid, glm::vec3 *origins, glm::vec3 *dirs, Node *BVH, Triangle *triangles, GLuint *triIndices, int *triHit, glm::vec4 *hitPoint, float factor)
 {
 
     int j = threadIdx.x + blockIdx.x*blockDim.x;
@@ -172,17 +164,13 @@ __global__ void intersectBVHVelocity(int N, int maxTid, glm::vec3 *origins, glm:
     int hit = -10;
 
 
-    glm::vec3 dir = -dirs[tid];
+    glm::vec3 dir = -dirs[tid] * factor;
     glm::vec4 hitPt = glm::vec4(0.0f, 0.0f, 0.0f, 1e30f);
     
 
     if (tid < maxTid && dot(dir, dir) > EPS)
     {
         glm::vec3 origin = origins[tid];
-
-        // if (tid == 1950) printf("\ndir = %f %f %f", dir.x, dir.y, dir.z);
-
-        // printf("\ndir at id %i = %f %f %f && origin = %f %f %f",tid,  dir.x, dir.y, dir.z, origin.x, origin.y, origin.z);
 
         int rootIndex = 0;
         Node *currentNode = &BVH[rootIndex];
@@ -311,19 +299,10 @@ __global__ void updateVelocity(int N, int maxTid, glm::vec3 *color, glm::vec3 *p
             
             if (dot(v, n) < -EPS) vel[tid] = vT;
             
-            collisionF = R*1.1f + friction;
-            glm::vec3 lastPos = pos[tid];
-            if (isnan(vel[tid].x) || isnan(pos[tid].x)) printf("PB tid = %i", tid);
-            // vel[tid] += h * collisionF/(unitM);
+            collisionF = R*1.01f + friction;
 
-            pos[tid] = hitPt+ 0.001f*n;
-            if (isnan(vel[tid].x) || isnan(pos[tid].x)) printf("PB2 tid = %i", tid);
+            pos[tid] = hitPt+ 0.002f*n;
             
-            // if (tid == 6580) {
-            //     printf("\n\n NComp =%f // n = %f %f %f \n// R = %f %f %f // lastPos = %f %f %f // new pos = %f %f %f", Ncomp, n.x, n.y, n.z, R.x, R.y, R.z, lastPos.x, lastPos.y, lastPos.z, pos[tid].x, pos[tid].y, pos[tid].z);
-            // }
-            
-            if (tid == 6580) printf("\n R = %f %f %f // T = %f %f %f // collisionF = %f %f %f // vel = %f %f %f", R.x, R.y, R.z, T.x, T.y, T.z, collisionF.x, collisionF.y, collisionF.z, v.x, v.y, v.z);
             c = glm::vec3(1.0f, 1.0f, 0.0f);
         }
     
@@ -361,7 +340,7 @@ struct Collider
         bvh = new BVH(ptr);
         // send bvh data to gpu
         cudaErrorCheck(cudaMalloc((void **) &treeCuda, sizeof(Node)* (bvh->getNbNodes()) ));
-        cudaErrorCheck(cudaMemcpy(treeCuda, bvh->getTree(), sizeof(Node)  * bvh->getNbNodes(), cudaMemcpyHostToDevice));
+        cudaErrorCheck(cudaMemcpy(treeCuda, bvh->getTree(), sizeof(Node)*bvh->getNbNodes(), cudaMemcpyHostToDevice));
 
         cudaErrorCheck(cudaMalloc((void **) &trianglesCuda, sizeof(Triangle)* bvh->getNbTri() ));
         cudaErrorCheck(cudaMemcpy(trianglesCuda, bvh->tri(), sizeof(Triangle) * bvh->getNbTri(), cudaMemcpyHostToDevice));
@@ -406,37 +385,42 @@ class CollisionSolver
 
         dim3 gridDim((cloth->N() + 31)/32, (cloth->N() + 31)/32, 1);
         dim3 blockDim(32, 32, 1);
-        // raytracing using velocity
-        intersectBVHVelocity<<<gridDim, blockDim>>>(
-            cloth->N(), 
-            cloth->getVerticesNb(), 
-            (glm::vec3 *) cloth->getDataPtr(0),
-            (glm::vec3 *) cloth->getDataPtr(1),
-            collider.treeCuda,
-            collider.trianglesCuda,
-            collider.triIndicesCuda,
-            collider.triHit,
-            collider.interPos
-        );
-        cudaErrorCheck(cudaDeviceSynchronize());
 
-        updateVelocity<<<gridDim, blockDim>>>(
-            cloth->N(), 
-            cloth->getVerticesNb(), 
-            (glm::vec3 *) cloth->getDataPtr(3),
-            (glm::vec3 *) cloth->getDataPtr(0),
-            v,
-            m_collisionsFBuffer,
-            collider.trianglesCuda,
-            collider.triHit,
-            collider.interPos,
-            updatePt,
-            m_Kf,
-            m_Kd,
-            h,
-            unitM
-        );
-        cudaErrorCheck(cudaDeviceSynchronize());
+        for (auto &collider: m_colliders)
+        {   
+                // raytracing using velocity
+                intersectBVHVelocity<<<gridDim, blockDim>>>(
+                    cloth->N(), 
+                    cloth->getVerticesNb(), 
+                    (glm::vec3 *) cloth->getDataPtr(0),
+                    (glm::vec3 *) cloth->getDataPtr(1),
+                    collider.treeCuda,
+                    collider.trianglesCuda,
+                    collider.triIndicesCuda,
+                    collider.triHit,
+                    collider.interPos,
+                    i
+                );
+            cudaErrorCheck(cudaDeviceSynchronize());
+            updateVelocity<<<gridDim, blockDim>>>(
+
+                cloth->N(), 
+                cloth->getVerticesNb(), 
+                (glm::vec3 *) cloth->getDataPtr(3),
+                (glm::vec3 *) cloth->getDataPtr(0),
+                v,
+                m_collisionsFBuffer,
+                collider.trianglesCuda,
+                collider.triHit,
+                collider.interPos,
+                updatePt,
+                m_Kf,
+                m_Kd,
+                h,
+                unitM
+            );
+            cudaErrorCheck(cudaDeviceSynchronize());
+        }
 
 
     };

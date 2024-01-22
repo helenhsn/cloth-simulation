@@ -7,5 +7,5 @@ out vec4 fragCol;
 
 void main()
 {
-    fragCol = vec4(0.2, 0.2, 0.2, 1.0);
+    fragCol = vec4(0.7, 0.7, 0.7, 1.0);
 }

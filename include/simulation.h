@@ -40,8 +40,6 @@ class Simulation
         m_solver = new ExplicitSolver(grid, updatingPt);
         m_collisionSolver = new CollisionSolver(grid);
         m_grid->unbindCudaData();
-        
-
     };
 
     ~Simulation()
@@ -54,7 +52,6 @@ class Simulation
     {   
         if (m_isPaused) return;
 
-        printf("\n\n>>> UPDATE for frame id = %i\n", m_iFrame);
         m_grid->bindCudaData();
         for (int i=0; i<m_nbSubSteps; i++) 
         {

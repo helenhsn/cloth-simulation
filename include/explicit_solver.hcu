@@ -77,7 +77,7 @@ __global__ void updateInternalForces(bool isStretchSpring, int maxTid, int Ngrid
         atomicAdd(addB + 1, -fSpring.y);
         atomicAdd(addB + 2, -fSpring.z);
 
-        if (ids.y==33 && ids.x ==0) printf("\n tidI = %i // tidJ = %i // F = %f %f %f, xi=%f %f %f // xj =%f %f %f", i, j, -fSpring.x, -fSpring.y, -fSpring.z, xIter[ids.x].x, xIter[ids.x].y, xIter[ids.x].z, xIter[ids.y].x, xIter[ids.y].y, xIter[ids.y].z);
+        // if (ids.y==33 && ids.x ==0) printf("\n tidI = %i // tidJ = %i // F = %f %f %f, xi=%f %f %f // xj =%f %f %f", i, j, -fSpring.x, -fSpring.y, -fSpring.z, xIter[ids.x].x, xIter[ids.x].y, xIter[ids.x].z, xIter[ids.y].x, xIter[ids.y].y, xIter[ids.y].z);
 
         // if (ids.x == 6452) printf("\nok : test = %f // fspring = %f %f %f", FIter[ids.x].x, fSpring.x, fSpring.y, fSpring.z);
         // if (ids.y == 6452) printf("\nok : test = %f // fspring = %f %f %f", FIter[ids.y].x, fSpring.x, fSpring.y, fSpring.z);
@@ -178,7 +178,7 @@ __global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm:
         }
 
 
-        if (tid == 33) printf("\nF = %f %f %f // collisions = %f %f %f", FIterAcc[tid].x, FIterAcc[tid].y, FIterAcc[tid].z, collisionsFBuffer[tid].x, collisionsFBuffer[tid].y, collisionsFBuffer[tid].z);
+        // if (tid == 33) printf("\nF = %f %f %f // collisions = %f %f %f", FIterAcc[tid].x, FIterAcc[tid].y, FIterAcc[tid].z, collisionsFBuffer[tid].x, collisionsFBuffer[tid].y, collisionsFBuffer[tid].z);
         vIterAcc[tid] = glm::vec3(0.0f);
         collisionsFBuffer[tid] = FIterAcc[tid];
         FIterAcc[tid] = glm::vec3(0.0f);
@@ -415,7 +415,7 @@ class ExplicitSolver: public Solver
         bool *updatePt
     ) : 
     Solver(0.0012f),
-    m_Ks(230.0), 
+    m_Ks(2000.0), 
     m_Kd(10.0), 
     m_Ka(0.1), 
     m_unitM(0.20), 

@@ -19,7 +19,7 @@ void keyboard_callback(GLFWwindow *window);
 
 
 //Camera camera(glm::vec3(21.8819, 20.3187, 83.4559));
-Camera camera(glm::vec3(10.0, 20., 50.0));
+Camera camera(glm::vec3(2.0, 10., 10.0));
 
 float dt = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;
@@ -70,34 +70,30 @@ int main()
     ShaderProgram cloth_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
 
 
-    glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.05f, 1.0f, 0.05f));
-    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 8.0f, 0.0f));
+    glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.08f, 1.0f, 0.08f));
+    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 6.0f, 0.0f));
     Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 128);
     
-    glm::mat4x4 modelGround = glm::scale(glm::mat4(1.0f), 5.0f*glm::vec3(1.0f, 0.0f, 1.0f));
-    modelGround = glm::translate(modelGround, -50.0f*glm::vec3(1.0f, 0.0f, 1.0f));
-    Plane *ground = new Plane(ground_pgrm.glid, modelGround, 500, {false, false, false});
+    glm::mat4 modelGround = glm::translate(glm::mat4(1.0f), -20.0f*glm::vec3(1.0f, 0.0f, 1.0f));
+    Plane *ground = new Plane(ground_pgrm.glid, modelGround, 50, {false, false, false});
     ground->setPrimOpenGL(GL_LINES);
     
-    glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 5.0f, 3.0f));
+    glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 3.0f, 5.0f));
     Sphere *sphere = new Sphere(simple_pgrm.glid, modelSphere, 2.0);
     Simulation *sim = new Simulation(cloth);
 
-    glm::mat4 rot = glm::rotate(glm::mat4(1.0f), -3.14159266f/2.0f, glm::vec3(1.0f, 0.0f, 0.0f));
-    glm::mat4 scal = glm::scale(glm::mat4(1.0f), 0.05f*glm::vec3(1.0f, 1.0f, 1.0f));
-    //glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, -10.0f, 5.0f));
-    glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 0.0f, 4.0f));
-    glm::mat4 modelCollider = trans*rot*scal;
+    glm::mat4 scal = glm::scale(glm::mat4(1.0f), 0.1f*glm::vec3(1.0f, 1.0f, 1.0f));
+    glm::mat4 trans = glm::translate(glm::mat4(1.0f), glm::vec3(7.0f, 0.0f, 8.0f));
+    glm::mat4 modelCollider = trans*scal;
     
 
     glm::mat4 modelSimpleCollider = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 8.0f, 2.0f));
     Plane *simpleCollider = new Plane(simple_pgrm.glid, modelSimpleCollider, 10);
     
-    MeshFromPLY *anotherCollider = new MeshFromPLY(simple_pgrm.glid, modelCollider, "../assets/bunny_low.ply");
+    MeshFromPLY *anotherCollider = new MeshFromPLY(simple_pgrm.glid, modelCollider, "../assets/teapot.ply");
 
-
-    sim->addCollider(anotherCollider);
-
+    sim->addCollider(ground);
+    sim->addCollider(sphere);
 
     // Init GUI (imgui window)
     GUI *gui = new GUI(window);    
@@ -134,7 +130,7 @@ int main()
         simple_pgrm.setVec3("camera_pos", camera.pos());
         GLenum wireframeMode = gui->colliderWireframe ? GL_LINE : GL_FILL;
         glPolygonMode(GL_FRONT_AND_BACK,  wireframeMode);
-        anotherCollider->draw();
+        sphere->draw();
 
         ground_pgrm.use();
         ground_pgrm.setMat4("projection", projection);

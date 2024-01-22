@@ -327,8 +327,8 @@ class Sphere : public Mesh
 
     static Data init_mesh(glm::mat4x4 &model, float r)
     {
-        int rowCount = 30;
-        int columnCount = 30;
+        int rowCount = 3;
+        int columnCount = 3;
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec3> color;
@@ -488,7 +488,7 @@ class MeshFromPLY: public Mesh
             try { colors = file.request_properties_from_element("vertex", { "r", "g", "b", "a" }); }
             catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
 
-            try { texcoords = file.request_properties_from_element("vertex", { "u", "v" }); }
+            try { texcoords = file.request_properties_from_element("vertex", { "s", "t" }); }
             catch (const std::exception & e) { std::cerr << "tinyply exception: " << e.what() << std::endl; }
 
             // Providing a list size hint (the last argument) is a 2x performance improvement. If you have 
