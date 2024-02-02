@@ -45,7 +45,7 @@ class GUI
     {
         ExplicitSolver *solver = static_cast<ExplicitSolver *>(sim->solver());
         CollisionSolver *collisionSolver = sim->collisionSolver();
-
+        SimulationParams *simParams = sim->params();
 
 
         ImGui::Begin("SETTINGS WINDOW");
@@ -59,7 +59,7 @@ class GUI
         }
         if (ImGui::Button("PAUSE SIMULATION", ImVec2(150, 30))) 
         {
-            sim->changePaused();
+            simParams->changePaused();
         }
 
         if (ImGui::Button("CLOTH WIREFRAME", ImVec2(150, 30))) 
@@ -75,26 +75,26 @@ class GUI
 
         ImGui::SeparatorText("INFOS");
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "RMB = rotate camera");
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Q(Azerty)/S/D/Z buttons = move camera left/backward/right/forward");
         
 
         ImGui::SeparatorText("INTEGRATION PARAMETERS");
-        if (ImGui::SliderFloat("Mass", solver->m(), 0.1f, 10.0f, "%.2f"))
+        if (ImGui::SliderFloat("Mass", &simParams->unitM, 0.1f, 10.0f, "%.2f"))
         {
-            solver->updateGravity();
+            simParams->updateGravity();
         }
-        ImGui::SliderFloat("Stiffness", solver->Ks(), 0.0f, 5000.0f, "%.1f");
-        ImGui::SliderFloat("Damping", solver->Kd(), 0.0f, 40.0f, "%.3f");
-        ImGui::SliderFloat("Viscous Force", solver->Ka(), 0.0f, 20.0f, "%.1f");
-        ImGui::SliderFloat("Time step", solver->timeStep(), 0.00001f, 0.1f, "%.6f");
-        ImGui::SliderInt("Number substeps", sim->nbSubSteps(), 1, 70);
-        if (ImGui::SliderFloat3("Wind force", solver->wind(), -50.0f, 50.0f))
+        ImGui::SliderFloat("Stiffness", &simParams->Ks, 0.0f, 5000.0f, "%.1f");
+        ImGui::SliderFloat("Damping", &simParams->Kd, 0.0f, 40.0f, "%.3f");
+        ImGui::SliderFloat("Viscous Force", &simParams->Ka, 0.0f, 20.0f, "%.1f");
+        ImGui::SliderFloat("Time step", &simParams->timeStep, 0.00001f, 0.1f, "%.6f");
+        ImGui::SliderInt("Number substeps", &simParams->nbSubSteps, 1, 70);
+        if (ImGui::SliderFloat3("Wind force", simParams->windUI, -10.0f, 10.0f))
         {
-            solver->updateWind();
+            simParams->updateWind();
         }
         
         ImGui::SeparatorText("COLLISION PARAMETERS");
-        ImGui::SliderFloat("Friction coefficient", collisionSolver->Kf(), 0.0f, 50.0f, "%.2f");
-        ImGui::SliderFloat("Damping coefficient", collisionSolver->Kd(), 0.0f, 1.0f, "%.2f");
+        ImGui::SliderFloat("Friction coefficient", &simParams->Kf, 0.0f, 50.0f, "%.2f");
 
 
         

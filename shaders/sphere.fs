@@ -3,6 +3,7 @@
 in vec3 p_pos;
 in vec3 p_normal;
 in vec2 p_uv;
+in vec3 p_color;
 
 out vec4 fragCol;
 
@@ -14,7 +15,7 @@ void main()
 {
     vec3 v = normalize(camera_pos - p_pos);
 
-    vec4 col = vec4(0.5, 0., 0.5, 1.0);
+    vec4 col = vec4(p_color, 1.0);
     vec3 n = normalize(p_normal);
     
     float f = dot(n, v);

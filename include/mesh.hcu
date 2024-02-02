@@ -15,6 +15,9 @@
 #include "tinyply.hpp"
 #include "example-utils.hpp"
 
+#define FAST_OBJ_IMPLEMENTATION
+#include "vendors/objparser/OBJ_Loader.h"
+
 using namespace tinyply;
 
 struct Data 
@@ -269,7 +272,7 @@ class Plane: public Mesh
                 if ((j*N_+i)==6580) {
                     color.push_back(glm::vec3(0.0f, 0.0f, 1.0f));
                 }
-                else color.push_back(glm::vec3(0.0f, 1.0f, 0.0f));
+                else color.push_back(glm::vec3(1.0f, 0.0f, 0.0f));
             }
         }
 
@@ -327,8 +330,8 @@ class Sphere : public Mesh
 
     static Data init_mesh(glm::mat4x4 &model, float r)
     {
-        int rowCount = 3;
-        int columnCount = 3;
+        int rowCount = 30;
+        int columnCount = 30;
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec3> color;
@@ -552,6 +555,73 @@ class MeshFromPLY: public Mesh
         {
             std::cerr << "Caught tinyply exception: " << e.what() << std::endl;
         }
+    }
+};
+
+class MeshFromOBJ: public Mesh
+{
+    public:
+
+    MeshFromOBJ(GLint pgrmGLid, glm::mat4x4 &model, const char *filename, std::vector<bool> shared = {true, false, false, false}): 
+    Mesh(pgrmGLid, MeshFromOBJ::init_mesh(model, filename), shared) {}
+    
+    static Data init_mesh(glm::mat4x4 &model, const std::string & filepath, const bool preload_into_memory = true)
+    {
+        std::vector<glm::vec3> vertices;
+        std::vector<glm::vec3> normals;
+        std::vector<glm::vec3> color;
+        std::vector<glm::vec2> uv;
+        std::vector<GLuint> indices;
+
+        glm::mat3x3 modelMatrix3(model);
+
+        glm::mat3x3 normalMatrix = getDeterminant(modelMatrix3) != 0.0 ? glm::inverseTranspose(modelMatrix3) : glm::mat3(1.0f);
+        
+        std::cout << "Reading now using fast obj loader ....\n" << std::endl;
+
+        // Initialize Loader
+        objl::Loader Loader;
+
+        // Load .obj File
+        bool loadout = Loader.LoadFile(filepath);
+
+        if (loadout)
+        {
+                // Go through each loaded mesh and out its contents
+            for (int i = 0; i < Loader.LoadedMeshes.size(); i++)
+            {
+                // Copy one of the loaded meshes to be our current mesh
+                objl::Mesh mesh = Loader.LoadedMeshes[i];
+
+                // Print Mesh Name
+                std::cout << "Mesh " << i << ": " << mesh.MeshName << "\n" << std::endl;
+
+                // Go through each vertex and print its number,
+                //  position, normal, and texture coordinate
+                for (int i = 0; i < mesh.Vertices.size(); i++)
+                {
+                    glm::vec4 v = glm::vec4(mesh.Vertices[i].Position.X, mesh.Vertices[i].Position.Y, mesh.Vertices[i].Position.Z, 1.0);
+                    vertices.push_back(glm::vec3(model * v));
+
+                    normals.push_back(normalMatrix * glm::vec3(mesh.Vertices[i].Normal.X, mesh.Vertices[i].Normal.Y, mesh.Vertices[i].Normal.Z));
+
+                    uv.push_back(glm::ivec2(mesh.Vertices[i].TextureCoordinate.X, mesh.Vertices[i].TextureCoordinate.Y));
+                    color.push_back(glm::vec3(0.9f));
+                }
+
+                // Go through every 3rd index and print the
+                //	triangle that these indices represent
+                for (int j = 0; j < mesh.Indices.size(); j += 3)
+                {
+                    indices.push_back(GLuint(mesh.Indices[j]));
+                    indices.push_back(GLuint(mesh.Indices[j+1]));
+                    indices.push_back(GLuint(mesh.Indices[j+2]));
+                }
+            }
+        }
+
+        Data new_data = {vertices, normals, uv, color, indices, model}; 
+        return new_data;
     }
 };
 

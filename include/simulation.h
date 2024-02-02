@@ -2,9 +2,9 @@
 #define SIMULATION_H
 
 
-#include "../include/mesh.hcu"
-#include "../include/explicit_solver.hcu"
-#include "../include/collisions_solver.hcu"
+#include "mesh.hcu"
+#include "explicit_solver.hcu"
+#include "collisions_solver.hcu"
 
 enum SOLVER_TYPE
 {
@@ -12,57 +12,56 @@ enum SOLVER_TYPE
     IMPLICIT
 };
 
+
 class Simulation
 {
     private:
     Plane *m_grid; // cloth
     std::vector<Mesh *> m_colliders;
 
+    SimulationParams *m_params;
     ExplicitSolver *m_solver;
     CollisionSolver *m_collisionSolver;
 
-    bool *updatingPt;
 
-    int m_nbSubSteps;
-
-    bool m_isPaused;
-    bool m_reset;
+    
 
     int m_iFrame; // frame index
 
     public:
     Simulation(Plane *grid)
-    : m_grid(grid), m_nbSubSteps(1), m_isPaused(false), m_iFrame(0)
+    : m_grid(grid), m_iFrame(0)
     {
-        cudaErrorCheck(cudaMalloc((void **) &updatingPt, sizeof(bool)* m_grid->getVerticesNb()));
-        
+        m_params = new SimulationParams();
         m_grid->bindCudaData();
-        m_solver = new ExplicitSolver(grid, updatingPt);
+        m_solver = new ExplicitSolver(grid);
         m_collisionSolver = new CollisionSolver(grid);
         m_grid->unbindCudaData();
     };
 
     ~Simulation()
     {
-        // free solver ?
+        delete m_solver;
+        delete m_collisionSolver;
 
     }
 
     void run(float currentTime)
     {   
-        if (m_isPaused) return;
+        if (m_params->isPaused) return;
 
         m_grid->bindCudaData();
-        for (int i=0; i<m_nbSubSteps; i++) 
+        for (int i=0; i<m_params->nbSubSteps; i++) 
         {
-            m_solver->step(m_grid, updatingPt, m_collisionSolver->collisionsFBuffer());
-            m_collisionSolver->solve(m_grid, m_solver->getVelocities(), updatingPt, m_solver->getFBuffer(), *(m_solver->timeStep()), *(m_solver->m()),*(m_solver->Ks()));
+            m_solver->step(m_grid, m_params, m_collisionSolver->collisionsFBuffer());
+            m_collisionSolver->solve(m_grid, m_solver->getVelocities(), m_params, m_solver->getFBuffer());
         }
         // collision
         m_grid->unbindCudaData();
 
         m_iFrame++;
     }
+    SimulationParams *params() {return m_params;};
 
     Solver *solver() {return m_solver;};
 
@@ -73,12 +72,6 @@ class Simulation
         m_collisionSolver->addCollider(collider);
     };
 
-    int *nbSubSteps() {return &m_nbSubSteps;};
-
-    void changePaused() 
-    { 
-        m_isPaused = !m_isPaused;
-    };
     
     void reset()
     {
@@ -87,7 +80,7 @@ class Simulation
         glm::mat4x4 model = m_grid->getModel();
         delete m_grid;
         m_grid = new Plane(glid, model, sizeEdge);
-        m_solver->resetScheme(m_grid, updatingPt);
+        m_solver->resetScheme(m_grid);
     }
 };
 #endif

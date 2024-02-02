@@ -23,5 +23,5 @@ void main()
     float diff = max(f, 0.0);
     float spec = pow(max(dot(h, n), 0.0), 128.0);
 
-    fragCol = col * ( 0.2 + diff + spec);
+    fragCol = col * ( 0.5 + diff + spec);
 }

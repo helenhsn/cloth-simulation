@@ -192,9 +192,9 @@ class BVH
         {
             float AABBmin = node.aabb.aabbMin[axis];
             float AABBmax = node.aabb.aabbMax[axis];
-            float step = (AABBmax - AABBmin)/99.0;
+            float step = (AABBmax - AABBmin)/89.0;
 
-            for (int k = 0; k<100; ++k)
+            for (int k = 0; k<90; ++k)
             {
 
                 // testing one axis per triangle in the current node
