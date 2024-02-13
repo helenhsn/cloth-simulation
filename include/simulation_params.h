@@ -46,13 +46,13 @@ struct SimulationParams
 
 
     SimulationParams() : 
-    timeStep(0.0012f),
+    timeStep(0.0016f),
     nbSubSteps(1), 
     isPaused(false),
-    Ks(200.0f), 
+    Ks(400.0f), 
     Kd(10.0f), 
     Ka(0.1f), 
-    unitM(0.20f), 
+    unitM(0.15f), 
     wind(glm::vec3(0.0f)),
     windUI({0.0f, 0.0f, 0.0f}),
     gravity(glm::vec3(0.0f, -9.81f*unitM, 0.0f)),

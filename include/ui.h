@@ -43,7 +43,7 @@ class GUI
 
     void buildWindow(Simulation *sim, Plane *cloth)
     {
-        ExplicitSolver *solver = static_cast<ExplicitSolver *>(sim->solver());
+        ExplicitSolver *solver = sim->solver();
         CollisionSolver *collisionSolver = sim->collisionSolver();
         SimulationParams *simParams = sim->params();
 
@@ -86,7 +86,7 @@ class GUI
         ImGui::SliderFloat("Stiffness", &simParams->Ks, 0.0f, 5000.0f, "%.1f");
         ImGui::SliderFloat("Damping", &simParams->Kd, 0.0f, 40.0f, "%.3f");
         ImGui::SliderFloat("Viscous Force", &simParams->Ka, 0.0f, 20.0f, "%.1f");
-        ImGui::SliderFloat("Time step", &simParams->timeStep, 0.00001f, 0.1f, "%.6f");
+        ImGui::SliderFloat("Time step", &simParams->timeStep, 0.0001f, 0.1f, "%.6f");
         ImGui::SliderInt("Number substeps", &simParams->nbSubSteps, 1, 70);
         if (ImGui::SliderFloat3("Wind force", simParams->windUI, -10.0f, 10.0f))
         {
@@ -94,7 +94,7 @@ class GUI
         }
         
         ImGui::SeparatorText("COLLISION PARAMETERS");
-        ImGui::SliderFloat("Friction coefficient", &simParams->Kf, 0.0f, 50.0f, "%.2f");
+        ImGui::SliderFloat("Friction coefficient", &simParams->Kf, 0.0f, 5.0f, "%.2f");
 
 
         

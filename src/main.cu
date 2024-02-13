@@ -71,19 +71,20 @@ int main()
 
 
     glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.08f, 1.0f, 0.08f));
-    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 6.0f, 0.0f));
+    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 5.0f, 0.0f));
     Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 128);
+    
+    Simulation *sim = new Simulation(cloth);
     
     glm::mat4 scaleGround = glm::scale(glm::mat4(1.0f), 3000.0f*glm::vec3(1.0f, 0.0f, 1.0f));
     glm::mat4 modelGround = glm::translate(glm::mat4(1.0f), -1000.0f*glm::vec3(1.0f, 0.0f, 1.0f))*scaleGround;
-    Plane *ground = new Plane(ground_pgrm.glid, modelGround, 50, {false, false, false});
+    Plane *ground = new Plane(ground_pgrm.glid, modelGround, 50, {true, false, false});
     
     glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 3.0f, 5.0f));
-    Sphere *sphere = new Sphere(simple_pgrm.glid, modelSphere, 2.0);
-    Simulation *sim = new Simulation(cloth);
 
     glm::mat4 modelSimpleCollider = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 8.0f, 2.0f));
     Plane *simpleCollider = new Plane(simple_pgrm.glid, modelSimpleCollider, 10);
+    Sphere *sphere = new Sphere(simple_pgrm.glid, modelSphere, 1.0);
 
     glm::mat4 scaleCollider = glm::scale(glm::mat4(1.0f), 0.03f*glm::vec3(1.0f, 1.0f, 1.0f));
     glm::mat4 transCollider = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 3.0f, 5.0f));
@@ -93,13 +94,14 @@ int main()
 
     scaleCollider = glm::scale(glm::mat4(1.0f), 0.38f*glm::vec3(1.5f, 1.0f, 1.0f));
     glm::mat4 rotCollider = glm::rotate(glm::mat4(1.0f), 3.14159266f/2.0f, glm::vec3(0.0f, 1.0f, 0.0f));
-    transCollider = glm::translate(glm::mat4(1.0f), glm::vec3(-7.0f, 2.0f, 5.0f));
+    transCollider = glm::translate(glm::mat4(1.0f), glm::vec3(-7.0f, 1.50f, 5.0f));
     modelCollider = rotCollider*transCollider*scaleCollider;
     MeshFromOBJ *anotherCollider2 = new MeshFromOBJ(simple_pgrm.glid, modelCollider, "../assets/heart.obj");
 
 
-    sim->addCollider(ground);
     sim->addCollider(anotherCollider2);
+    sim->addCollider(ground);
+    // sim->addCollider(cloth);
 
     // Init GUI (imgui window)
     GUI *gui = new GUI(window);    

@@ -6,23 +6,74 @@
 #include <chrono>
 #include "../include/mesh.hcu"
 
+struct Triangle
+{
+    glm::vec3 p0;
+    glm::vec3 p1;
+    glm::vec3 p2;
+
+    GLuint i0;
+    GLuint i1;
+    GLuint i2;
+
+    glm::vec3 centroid;
+    glm::vec3 normal0; // normal to the triangle's face
+    glm::vec3 normal1; // normal to the triangle's face
+    glm::vec3 normal2; // normal to the triangle's face
+    glm::vec3 normal;
+
+    Triangle(
+        GLuint _p0, 
+        GLuint _p1, 
+        GLuint _p2, 
+        std::vector<glm::vec3> &vertices, 
+        std::vector<glm::vec3> &normals
+        ) 
+        : 
+    i0(_p0),
+    i1(_p1),
+    i2(_p2),
+    p0(vertices[_p0]), 
+    p1(vertices[_p1]), 
+    p2(vertices[_p2])
+    {
+
+        centroid = (p0 + p1 + p2)/3.0f;
+        normal0 = normals[_p0];
+        normal1 = normals[_p1];
+        normal2 = normals[_p2];
+ 
+        normal = cross(p1 - p0, p2 - p0); 
+    }
+};
+
 struct AABB
 {
     glm::vec3 aabbMin;
     glm::vec3 aabbMax;
-    AABB() : aabbMin(glm::vec3(1e30f)), aabbMax(glm::vec3(-1e30f)) {};
-    float area() 
+    __host__ __device__ AABB() : aabbMin(glm::vec3(1e30f)), aabbMax(glm::vec3(-1e30f)) {};
+    __host__ __device__ float area() 
     {
         glm::vec3 diff = aabbMax - aabbMin;
         return diff.x*diff.y + diff.x*diff.z + diff.y*diff.z;
     };
-    void merge(glm::vec3 p)
+    
+    __host__ void merge(Triangle &tri)
     {   
-        for(int i = 0; i<3; ++i)
-        {
-            aabbMin[i] = fminf(aabbMin[i], p[i]);
-            aabbMax[i] = fmaxf(aabbMax[i], p[i]);
-        }
+        glm::vec3 triMin = min(min(tri.p0, tri.p1), tri.p2);
+        glm::vec3 triMax = max(max(tri.p0, tri.p1), tri.p2);
+
+        aabbMin = min(aabbMin, triMin);
+        aabbMax = max(aabbMax, triMax);
+    };
+
+    __device__ void merge(glm::vec3 p0, glm::vec3 p1, glm::vec3 p2)
+    {   
+        glm::vec3 triMin = min(min(p0, p1), p2);
+        glm::vec3 triMax = max(max(p0, p1), p2);
+
+        aabbMin = min(aabbMin, triMin);
+        aabbMax = max(aabbMax, triMax);
     };
 };
 
@@ -34,29 +85,7 @@ struct Node
     // if triCount != 0 => BVHNode == leafNode => leftIdx == index of the first triangle 
     // (ORIGINAL INDEX -> index in the original list of triangles)
     int leftIdx; 
-};
-
-struct Triangle
-{
-    glm::vec3 p0;
-    glm::vec3 p1;
-    glm::vec3 p2;
-    glm::vec3 centroid;
-    glm::vec3 normal0; // normal to the triangle's face
-    glm::vec3 normal1; // normal to the triangle's face
-    glm::vec3 normal2; // normal to the triangle's face
-    glm::vec3 normal;
-
-    Triangle(GLuint _p0, GLuint _p1, GLuint _p2, std::vector<glm::vec3> &vertices, std::vector<glm::vec3> &normals) : p0(vertices[_p0]), p1(vertices[_p1]), p2(vertices[_p2])
-    {
-
-        centroid = (p0 + p1 + p2)/3.0f;
-        normal0 = normals[_p0];
-        normal1 = normals[_p1];
-        normal2 = normals[_p2];
- 
-        normal = cross(p1 - p0, p2 - p0); 
-    }
+    bool isUpdatedBV = false; // checks whether the actual bounding volume of the node has been updated. default is false
 };
 
 class BVH
@@ -192,9 +221,9 @@ class BVH
         {
             float AABBmin = node.aabb.aabbMin[axis];
             float AABBmax = node.aabb.aabbMax[axis];
-            float step = (AABBmax - AABBmin)/89.0;
+            float step = (AABBmax - AABBmin)/90.0;
 
-            for (int k = 0; k<90; ++k)
+            for (int k = 0; k<100; ++k)
             {
 
                 // testing one axis per triangle in the current node
@@ -271,17 +300,13 @@ class BVH
             if (tri.centroid[axis] < splitPos)
             {
                 // merge left box with current triangle
-                lBox.merge(tri.p0);
-                lBox.merge(tri.p1);
-                lBox.merge(tri.p2);
+                lBox.merge(tri);
                 lTriNb++;
             }
             else
             {
                 // merge right box with current triangle
-                rBox.merge(tri.p0);
-                rBox.merge(tri.p1);
-                rBox.merge(tri.p2);
+                rBox.merge(tri);
                 rTriNb++;
             }
         }
@@ -298,10 +323,8 @@ class BVH
         Node& node = tree[index];
         for (int i = 0; i < node.triCount; i++)
         {
-            Triangle& leafTri = m_triangles[m_triIndices[node.leftIdx + i]];
-            node.aabb.merge(leafTri.p0);
-            node.aabb.merge(leafTri.p1);
-            node.aabb.merge(leafTri.p2);
+            Triangle &leafTri = m_triangles[m_triIndices[node.leftIdx + i]];
+            node.aabb.merge(leafTri);
         }
     }
 };

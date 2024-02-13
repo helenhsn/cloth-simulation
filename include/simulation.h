@@ -51,19 +51,20 @@ class Simulation
         if (m_params->isPaused) return;
 
         m_grid->bindCudaData();
+        m_collisionSolver->bindCollidersCudaData();
         for (int i=0; i<m_params->nbSubSteps; i++) 
         {
             m_solver->step(m_grid, m_params, m_collisionSolver->collisionsFBuffer());
             m_collisionSolver->solve(m_grid, m_solver->getVelocities(), m_params, m_solver->getFBuffer());
         }
-        // collision
+        m_collisionSolver->unBindCollidersCudaData();
         m_grid->unbindCudaData();
 
         m_iFrame++;
     }
     SimulationParams *params() {return m_params;};
 
-    Solver *solver() {return m_solver;};
+    ExplicitSolver *solver() {return m_solver;};
 
     CollisionSolver *collisionSolver() {return m_collisionSolver;};
 
@@ -75,12 +76,18 @@ class Simulation
     
     void reset()
     {
+        // resetting cloth
         int glid = m_grid->glid();
         int sizeEdge = m_grid->N();
         glm::mat4x4 model = m_grid->getModel();
         delete m_grid;
         m_grid = new Plane(glid, model, sizeEdge);
+
+        // integration solver
         m_solver->resetScheme(m_grid);
+
+        // collision solver
+        m_collisionSolver->reset();
     }
 };
 #endif

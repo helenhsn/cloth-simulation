@@ -2,7 +2,6 @@
 #define EXPLICIT_SOLVER_H
 
 #include "mesh.hcu"
-#include "solver.h"
 #include "cuda_utils.hcu"
 #include "simulation_params.h"
 
@@ -86,7 +85,6 @@ __global__ void updateIterBuffers(int maxTid, int N, float kOffset, float yOffse
 
     if (tid < maxTid)
     {
-
         xIter[tid] = x[tid] + yOffset * vIter[tid]; // offset x
 
         glm::vec3 newV = v[tid] + yOffset * FIter[tid]/m; // xDot1,2,3,4
@@ -107,12 +105,12 @@ __device__ glm::vec3 computeNormal(int tid, int i, int j, int N_m1, int N, glm::
 
     glm::vec3 normal1 = normalize(cross(shear_vec1, shear_vec2));
 
-    // glm::vec3 shear_vec3 = j == 0 ? x_tid - x[tid+N] : x[tid - N] - x_tid; // left vec
-    // glm::vec3 shear_vec4 = i == N_m1 ?  x_tid - x[tid-1] : x[tid+1] - x_tid; // bottom vec
+    glm::vec3 shear_vec3 = j == 0 ? x_tid - x[tid+N] : x[tid - N] - x_tid; // left vec
+    glm::vec3 shear_vec4 = i == N_m1 ?  x_tid - x[tid-1] : x[tid+1] - x_tid; // bottom vec
 
-    // glm::vec3 normal2 = normalize(cross(shear_vec3, shear_vec4));
+    glm::vec3 normal2 = normalize(cross(shear_vec3, shear_vec4));
 
-    return normal1;
+    return normalize(0.5f*(normal1+normal2));
 }
 
 __global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *FIterAcc, glm::vec3 *n, float m, glm::vec3 absWind, glm::vec3 normWind, glm::vec3 gravity, float Ka)
@@ -124,11 +122,13 @@ __global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3
 
     if (tid < maxTid)
     {
-
         glm::vec3 normal = computeNormal(tid, i, j, N-1, N, xIter);
 
         n[tid] = normal;
-        FIterAcc[tid] += kOffset * (FIter[tid] + dot(abs(normal), absWind) * normWind + gravity - Ka*vIter[tid]); // add internal forces + all external forces : wind force + gravity force + friction force
+        // if (tid == 6746 && normal.y < 0.0f) printf("normal = %f %f %f", normal.x, normal.y, normal.z);
+        glm::vec3 F = FIter[tid] + dot(abs(normal), absWind) * normWind + gravity - Ka*vIter[tid];
+        FIter[tid] = F;
+        FIterAcc[tid] += kOffset * F; // add internal forces + all external forces : wind force + gravity force + friction force
     }
 }
 
@@ -142,13 +142,13 @@ __global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm:
     if (tid < maxTid)
     {
 
-        x[tid] = x[tid] + h*vIterAcc[tid]/6.0f;
+        // RK4 scheme
+        x[tid] += h*vIterAcc[tid]/6.0f;
         v[tid] += h*(FIterAcc[tid] + collisionsFBuffer[tid])/(6.0f*m);
 
         vIterAcc[tid] = glm::vec3(0.0f);
-        collisionsFBuffer[tid] = FIterAcc[tid];
+        collisionsFBuffer[tid] = FIterAcc[tid]; // reuse buffer collisions for the collision phase that's coming next
         FIterAcc[tid] = glm::vec3(0.0f);
-
     }
 
 }
@@ -186,7 +186,7 @@ struct SpringData
     float restLength;
 };
 
-class ExplicitSolver: public Solver
+class ExplicitSolver
 {
     private:
 
@@ -340,7 +340,6 @@ class ExplicitSolver: public Solver
     ExplicitSolver(
         Plane *grid
     ) : 
-    Solver(),
     m_correctSpring({false, true, false, false})
     {
         
