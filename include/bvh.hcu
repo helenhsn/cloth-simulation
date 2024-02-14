@@ -84,8 +84,9 @@ struct Node
     // if triCount = 0 => BVHNode != leafNode => leftIdx == Left node index
     // if triCount != 0 => BVHNode == leafNode => leftIdx == index of the first triangle 
     // (ORIGINAL INDEX -> index in the original list of triangles)
-    int leftIdx; 
-    bool isUpdatedBV = false; // checks whether the actual bounding volume of the node has been updated. default is false
+    int leftIdx;
+    int parentIdx;
+    bool isTreated = false;
 };
 
 class BVH
@@ -125,15 +126,19 @@ class BVH
         m_nodesNb++;
 
         /* Code à évaluer */
-        buildBV(0);
+        buildBV(root);
 
         // building recursively the BVH starting from root node
         buildTreeRec(0);
         
         std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() -start;
-        std::cout << "BVH built in " << elapsed_seconds.count() << "s -------------------- \n\n";
+        std::cout << "BVH built in ....... " << elapsed_seconds.count() << "s -------------------- \n\n";
 
-        // printTree(0);
+
+        auto start = std::chrono::steady_clock::now();
+        buildRefittingBuffer();
+        elapsed_seconds = std::chrono::steady_clock::now() -start;
+        std::cout << "BVH refitting buffer built in ....... " << elapsed_seconds.count() << "s -------------------- \n\n";
 
     }
 
@@ -185,8 +190,34 @@ class BVH
     std::vector<GLuint> m_triIndices; //
     std::vector<Triangle> m_triangles;
 
+    std::vector<std::vector<int>> m_refitting;
+
 
     Node *tree;
+
+    void buildRefittingBuffer()
+    {
+        int n = m_refitting.size(); // number of leaf nodes
+
+        for (int d = 0; d < (int) (log2(n) - 1); ++d)
+        {
+            for (int k = 0; k<(n-1); ++k)
+            {
+                // getting last node from corresponding list of indices
+                std::vector<int> list = m_refitting[k];
+                Node &child = tree[list.back()];
+
+                // getting parent node
+                Node *parent = &tree[child.parentIdx];
+                
+                if (!parent->isTreated)
+                {
+                    list.push_back(child.parentIdx);
+                    parent->isTreated = true;
+                }
+            }
+        }
+    }
 
     void printTriangles(const Node &node, int index)
     {
@@ -215,7 +246,11 @@ class BVH
         float currentPos;
         float currentCost;
 
-        if (node.triCount <= 2) return; // don't continue if number of triangles is inferior to 2
+        if (node.triCount <= 2) // don't continue if number of triangles is inferior to 2
+        {
+            m_refitting.push_back(std::vector<int>(currentIdx));
+            return;
+        }
 
         for (int axis = 0; axis<3; ++axis)
         {
@@ -240,7 +275,11 @@ class BVH
         
         // if the current node's cost is less than best cost, then we can stop subdiving the tree here
         float currNodeCost = node.aabb.area() * node.triCount;  
-        if (currNodeCost <= minCost) return;
+        if (currNodeCost <= minCost)
+        {
+            m_refitting.push_back(std::vector<int>(currentIdx));
+            return;
+        }
 
         int triIdx = node.leftIdx;
         int lastTriIdx = triIdx + node.triCount - 1;
@@ -261,29 +300,37 @@ class BVH
         // std::cout << "left first idx = " << triIdx << " && last  tri idx = " << lastTriIdx;
 
         int leftTriCount = triIdx - node.leftIdx;
-        if (leftTriCount == 0 || leftTriCount == node.triCount) return;  // if one of the sides is empty we do not split
+        if (leftTriCount == 0 || leftTriCount == node.triCount)  // if one of the sides is empty we do not split
+        {
+            m_refitting.push_back(std::vector<int>(currentIdx));
+            return;
+        }
     
         // <!>  at this stage of the function, we know the current node is NOT a leaf node.
+        // SPLITTING PHASE
 
-        int leftChild = m_nodesNb++;
-        int rightChild = m_nodesNb++;
+        int leftChildIdx = m_nodesNb++;
+        int rightChildIdx = m_nodesNb++;
 
-        tree[leftChild].leftIdx = node.leftIdx;
-        tree[leftChild].triCount = leftTriCount;
+        Node *leftChild = &tree[leftChildIdx];
+        leftChild->leftIdx = node.leftIdx;
+        leftChild->triCount = leftTriCount;
+        leftChild->parentIdx = currentIdx;
 
-        tree[rightChild].leftIdx = triIdx;
-        tree[rightChild].triCount = node.triCount - leftTriCount;
+        Node *rightChild = &tree[rightChildIdx];
+        rightChild->leftIdx = triIdx;
+        rightChild->triCount = node.triCount - leftTriCount;
+        rightChild->parentIdx = currentIdx;
 
-
-        buildBV(leftChild);
-        buildBV(rightChild);
+        buildBV(*leftChild);
+        buildBV(*rightChild);
 
         // -> current node possesses at least 1 child with a number of triangles != 0
-        node.leftIdx = leftChild;
+        node.leftIdx = leftChildIdx;
         node.triCount = 0;
 
-        buildTreeRec(leftChild);
-        buildTreeRec(rightChild);
+        buildTreeRec(leftChildIdx);
+        buildTreeRec(rightChildIdx);
     };
 
     float evaluateCost(Node &node, int &axis, float &splitPos) 
@@ -314,13 +361,12 @@ class BVH
         return cost > 0.0 ? cost : 1e30f;
     };
 
-    void buildBV(int index)
+    void buildBV(Node &node)
     {
         /**
          * Build the bounding volume (here: AABB) of the node at given index.
         */
 
-        Node& node = tree[index];
         for (int i = 0; i < node.triCount; i++)
         {
             Triangle &leafTri = m_triangles[m_triIndices[node.leftIdx + i]];

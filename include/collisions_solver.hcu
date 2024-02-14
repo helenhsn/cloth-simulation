@@ -222,9 +222,8 @@ __device__ void updateAABB(
     node->aabb.aabbMax = min(leftChild->aabb.aabbMax, rightChild->aabb.aabbMax);
 }
 
-__global__ void initFitting(
+__global__ void refitLeafNodes(
     int maxTid,
-    int N,
     int **indexData,
     Node *BVH,
     Triangle *triCloth,
@@ -232,67 +231,111 @@ __global__ void initFitting(
     glm::vec3 *verticesCloth
 )
 {
-    // int j = threadIdx.x + blockIdx.x*blockDim.x;
-    // int i = threadIdx.y + blockIdx.y*blockDim.y;
-
-    // int tid = j*N+i;
-
-    NodeInfo stack[MAX_STACK_SIZE];
-    int stackSize = 0;
-
-    NodeInfo rootInfo = {0, 0.0f};
-    push(stack, &stackSize, rootInfo);
-
-    while (stackSize != 0)
+    int tid = threadIdx.x + blockIdx.x*blockDim.x;
+    if (tid < maxTid)
     {
-        NodeInfo &currNodeInfo = pop(stack, &stackSize);
-        Node *currentNode = &BVH[currNodeInfo.index];
+        int index = indexData[tid][0];
+        Node *node = &BVH[index];
+        node->aabb = {};
 
-        if (currentNode->triCount != 0)
+        for (int i=0; i<node->triCount; ++i)
         {
-            currentNode->aabb = {};
+            Triangle tri = triCloth[triIdxCloth[node->leftIdx + i]];
+            // printf("tri vertices idx = %i %i %i", tri.i0, tri.i1, tri.i2);
+            // printf("tri vertices idx = %i %i %i // first val = %f %f %f", tri.i0, tri.i1, tri.i2, verticesCloth[tri.i0].x,  verticesCloth[tri.i0].y,  verticesCloth[tri.i0].z);
+            glm::vec3 p0 = verticesCloth[tri.i0];
+            glm::vec3 p1 = verticesCloth[tri.i1];
+            glm::vec3 p2 = verticesCloth[tri.i2];
 
-            for (int i=0; i<currentNode->triCount; ++i)
-            {
-                Triangle tri = triCloth[triIdxCloth[currentNode->leftIdx + i]];
-                // printf("tri vertices idx = %i %i %i", tri.i0, tri.i1, tri.i2);
-                // printf("tri vertices idx = %i %i %i // first val = %f %f %f", tri.i0, tri.i1, tri.i2, verticesCloth[tri.i0].x,  verticesCloth[tri.i0].y,  verticesCloth[tri.i0].z);
-                glm::vec3 p0 = verticesCloth[tri.i0];
-                glm::vec3 p1 = verticesCloth[tri.i1];
-                glm::vec3 p2 = verticesCloth[tri.i2];
+            glm::vec3 triMin = min(min(p0, p1), p2);
+            glm::vec3 triMax = max(max(p0, p1), p2);
 
-                glm::vec3 triMin = min(min(p0, p1), p2);
-                glm::vec3 triMax = max(max(p0, p1), p2);
-
-                currentNode->aabb.aabbMin = min(currentNode->aabb.aabbMin, triMin);
-                currentNode->aabb.aabbMax = max(currentNode->aabb.aabbMax, triMax);
-            }
-
-            currentNode->isUpdatedBV = true;
-
-
+            node->aabb.aabbMin = min(node->aabb.aabbMin, triMin);
+            node->aabb.aabbMax = max(node->aabb.aabbMax, triMax);
         }
-        else
-        {
-            NodeInfo leftChildInfo = NodeInfo {currentNode->leftIdx, 0.0f};
-            push(stack, &stackSize, leftChildInfo);
-            Node *leftChild = &BVH[leftChildInfo.index];
 
-
-            NodeInfo rightChildInfo = NodeInfo {currentNode->leftIdx+1, 0.0f};
-            push(stack, &stackSize, rightChildInfo);
-            Node *rightChild = &BVH[rightChildInfo.index];
-
-            if (leftChild->isUpdatedBV && rightChild->isUpdatedBV)
-            {
-                updateAABB(currentNode, leftChild, rightChild);
-                leftChild->isUpdatedBV = false;
-                rightChild->isUpdatedBV = false;
-                
-            }
-        }
     }
 }
+
+__global__ void refitParentNodes(
+    int maxTid,
+    int indexData,
+    Node *BVH
+)
+{
+    
+}
+// __global__ void updateLeafNodes(
+//     int maxTid,
+//     int N,
+//     int **indexData,
+//     Node *BVH,
+//     Triangle *triCloth,
+//     GLuint *triIdxCloth, 
+//     glm::vec3 *verticesCloth
+// )
+// {
+//     // int j = threadIdx.x + blockIdx.x*blockDim.x;
+//     // int i = threadIdx.y + blockIdx.y*blockDim.y;
+
+//     // int tid = j*N+i;
+
+//     NodeInfo stack[MAX_STACK_SIZE];
+//     int stackSize = 0;
+
+//     NodeInfo rootInfo = {0, 0.0f};
+//     push(stack, &stackSize, rootInfo);
+
+//     while (stackSize != 0)
+//     {
+//         NodeInfo &currNodeInfo = pop(stack, &stackSize);
+//         Node *currentNode = &BVH[currNodeInfo.index];
+
+//         if (currentNode->triCount != 0)
+//         {
+//             currentNode->aabb = {};
+
+//             for (int i=0; i<currentNode->triCount; ++i)
+//             {
+//                 Triangle tri = triCloth[triIdxCloth[currentNode->leftIdx + i]];
+//                 // printf("tri vertices idx = %i %i %i", tri.i0, tri.i1, tri.i2);
+//                 // printf("tri vertices idx = %i %i %i // first val = %f %f %f", tri.i0, tri.i1, tri.i2, verticesCloth[tri.i0].x,  verticesCloth[tri.i0].y,  verticesCloth[tri.i0].z);
+//                 glm::vec3 p0 = verticesCloth[tri.i0];
+//                 glm::vec3 p1 = verticesCloth[tri.i1];
+//                 glm::vec3 p2 = verticesCloth[tri.i2];
+
+//                 glm::vec3 triMin = min(min(p0, p1), p2);
+//                 glm::vec3 triMax = max(max(p0, p1), p2);
+
+//                 currentNode->aabb.aabbMin = min(currentNode->aabb.aabbMin, triMin);
+//                 currentNode->aabb.aabbMax = max(currentNode->aabb.aabbMax, triMax);
+//             }
+
+//             currentNode->isUpdatedBV = true;
+
+
+//         }
+//         else
+//         {
+//             NodeInfo leftChildInfo = NodeInfo {currentNode->leftIdx, 0.0f};
+//             push(stack, &stackSize, leftChildInfo);
+//             Node *leftChild = &BVH[leftChildInfo.index];
+
+
+//             NodeInfo rightChildInfo = NodeInfo {currentNode->leftIdx+1, 0.0f};
+//             push(stack, &stackSize, rightChildInfo);
+//             Node *rightChild = &BVH[rightChildInfo.index];
+
+//             if (leftChild->isUpdatedBV && rightChild->isUpdatedBV)
+//             {
+//                 updateAABB(currentNode, leftChild, rightChild);
+//                 leftChild->isUpdatedBV = false;
+//                 rightChild->isUpdatedBV = false;
+                
+//             }
+//         }
+//     }
+// }
 
 __global__ void intersectBVH(
     int colliderId,
