@@ -91,7 +91,7 @@ struct Node
 class BVH
 {
     public:
-    BVH(Mesh *mesh) : m_NTri(mesh->getIndicesNb()/3), m_nodesNb(0)
+    BVH(Mesh *mesh) : m_NTri(mesh->getIndicesNb()/3), m_nodesNb(0), m_leafNodesNb(0)
     {
         /**
          * Builds a BVH structure corresponding to the given mesh
@@ -132,6 +132,7 @@ class BVH
         
         std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() -start;
         std::cout << "BVH built in " << elapsed_seconds.count() << "s -------------------- \n\n";
+        printf("\nNB LEAF NODES = %i \n\n", m_leafNodesNb);
 
         // printTree(0);
 
@@ -182,6 +183,7 @@ class BVH
 
     int m_NTri; // number of triangles in mesh
     int m_nodesNb;
+    int m_leafNodesNb;
     std::vector<GLuint> m_triIndices; //
     std::vector<Triangle> m_triangles;
 
@@ -210,18 +212,22 @@ class BVH
         // computing best position & axis for the AABB's split using SAH
         int splitAxis;
         float splitPos;
-        float minCost = 1e30f; // the best split is the one that minimizes all intersections <!>
+        float minCost = 1e20f; // the best split is the one that minimizes all intersections <!>
 
         float currentPos;
         float currentCost;
 
-        if (node.triCount <= 2) return; // don't continue if number of triangles is inferior to 2
+        if (node.triCount <= 3) // don't continue if number of triangles is inferior to 3
+        {
+            m_leafNodesNb++;
+            return;
+        }
 
         for (int axis = 0; axis<3; ++axis)
         {
             float AABBmin = node.aabb.aabbMin[axis];
             float AABBmax = node.aabb.aabbMax[axis];
-            float step = (AABBmax - AABBmin)/90.0;
+            float step = (AABBmax - AABBmin)/99.0;
 
             for (int k = 0; k<100; ++k)
             {
@@ -240,7 +246,11 @@ class BVH
         
         // if the current node's cost is less than best cost, then we can stop subdiving the tree here
         float currNodeCost = node.aabb.area() * node.triCount;  
-        if (currNodeCost <= minCost) return;
+        if (currNodeCost <= minCost) 
+        {
+            m_leafNodesNb++;
+            return;
+        }
 
         int triIdx = node.leftIdx;
         int lastTriIdx = triIdx + node.triCount - 1;
@@ -261,7 +271,11 @@ class BVH
         // std::cout << "left first idx = " << triIdx << " && last  tri idx = " << lastTriIdx;
 
         int leftTriCount = triIdx - node.leftIdx;
-        if (leftTriCount == 0 || leftTriCount == node.triCount) return;  // if one of the sides is empty we do not split
+        if (leftTriCount == 0 || leftTriCount == node.triCount)  // if one of the sides is empty we do not split
+        {
+            m_leafNodesNb++;
+            return;
+        }
     
         // <!>  at this stage of the function, we know the current node is NOT a leaf node.
 

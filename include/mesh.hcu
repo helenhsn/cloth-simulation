@@ -269,10 +269,7 @@ class Plane: public Mesh
                 normals.push_back(n);
                 uv.push_back(glm::vec2((float) i/N_, (float) j/N_));
 
-                if ((j*N_+i)==6746) {
-                    color.push_back(glm::vec3(0.0f, 0.0f, 1.0f));
-                }
-                else color.push_back(glm::vec3(1.0f, 0.0f, 0.0f));
+                color.push_back(glm::vec3(1.0f, 0.0f, 0.0f));
             }
         }
 

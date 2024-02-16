@@ -71,7 +71,7 @@ int main()
 
 
     glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.08f, 1.0f, 0.08f));
-    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 5.0f, 0.0f));
+    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 4.8f, 0.0f));
     Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 128);
     
     Simulation *sim = new Simulation(cloth);
@@ -102,6 +102,10 @@ int main()
     sim->addCollider(anotherCollider2);
     sim->addCollider(ground);
     // sim->addCollider(cloth);
+
+    cudaDeviceProp prop;
+    cudaErrorCheck(cudaGetDeviceProperties(&prop, 0));
+
 
     // Init GUI (imgui window)
     GUI *gui = new GUI(window);    

@@ -17,7 +17,18 @@ __device__ void atomicAdd(float *addr, glm::vec3 val, glm::ivec3 offset, int see
     atomicAdd(addr + offset.z, val[offset.z]);
 }
 
-__device__ glm::vec3 computeSpringForces(bool isStretchSpring, int i, int j, glm::vec3 x_i, glm::vec3 v_i, glm::vec3 x_j, glm::vec3 v_j, float L, float Ks, float Kd)
+__device__ glm::vec3 computeSpringForces(
+    bool isStretchSpring, 
+    int i, 
+    int j, 
+    glm::vec3 x_i, 
+    glm::vec3 v_i, 
+    glm::vec3 x_j, 
+    glm::vec3 v_j, 
+    float L, 
+    float Ks, 
+    float Kd
+    )
 {
     glm::vec3 diff_xij = x_j - x_i;
     float length_xij  = sqrt(dot(diff_xij, diff_xij));
@@ -28,7 +39,6 @@ __device__ glm::vec3 computeSpringForces(bool isStretchSpring, int i, int j, glm
     float spring = Ks*(length_xij - L);
     float damping = Kd*dot(v_j-v_i, dir_xij);
 
-    // printf("\n\n n°%i : SPRING = %f // DAMPING = %f  ", i, spring, damping);
     float correction = 0.0;
     float tau_c = 0.1;
     float shrinking = (length_xij - L)/L;
@@ -39,14 +49,23 @@ __device__ glm::vec3 computeSpringForces(bool isStretchSpring, int i, int j, glm
     }
     glm::vec3 total = (spring + damping + correction)*dir_xij;
 
-    // if (isnan(spring)) printf("\nvi = %f %f %f vj = %f %f %f Kd = %f", v_i.x, v_i.y, v_i.z, v_j.x, v_j.y, v_j.z, Kd);
-
-    // if (isnan(total.x)) printf("\nspring = %f // damping = %f // correction = %f \n >>> other debug : diff_xij = %f %f %f // ", spring, damping, correction, dir_xij.x, dir_xij.y, dir_xij.z);
     return total;
 }
 
 
-__global__ void updateInternalForces(bool isStretchSpring, int maxTid, int Ngrid, int N, glm::ivec2 *springIds, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, float L, float Ks, float Kd)
+__global__ void updateInternalForces(
+    bool isStretchSpring, 
+    int maxTid, 
+    int Ngrid, 
+    int N, 
+    glm::ivec2 *springIds, 
+    glm::vec3 *xIter, 
+    glm::vec3 *vIter, 
+    glm::vec3 *FIter, 
+    float L, 
+    float Ks, 
+    float Kd
+    )
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
@@ -72,7 +91,19 @@ __global__ void updateInternalForces(bool isStretchSpring, int maxTid, int Ngrid
 
 }
 
-__global__ void updateIterBuffers(int maxTid, int N, float kOffset, float yOffset, glm::vec3 *x, glm::vec3 *v, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *vIterAcc, float m)
+__global__ void updateIterBuffers(
+    int maxTid, 
+    int N, 
+    float kOffset, 
+    float yOffset, 
+    glm::vec3 *x, 
+    glm::vec3 *v, 
+    glm::vec3 *xIter, 
+    glm::vec3 *vIter, 
+    glm::vec3 *FIter, 
+    glm::vec3 *vIterAcc, 
+    float m
+    )
 {
     /**
      * Initializes the 2 buffers used for computing RK4 iterations 
@@ -113,7 +144,21 @@ __device__ glm::vec3 computeNormal(int tid, int i, int j, int N_m1, int N, glm::
     return normalize(0.5f*(normal1+normal2));
 }
 
-__global__ void updateExternalForces(int maxTid, int N, float kOffset, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *FIterAcc, glm::vec3 *n, float m, glm::vec3 absWind, glm::vec3 normWind, glm::vec3 gravity, float Ka)
+__global__ void updateExternalForces(
+    int maxTid, 
+    int N, 
+    float kOffset, 
+    glm::vec3 *xIter, 
+    glm::vec3 *vIter, 
+    glm::vec3 *FIter, 
+    glm::vec3 *FIterAcc, 
+    glm::vec3 *n, 
+    float m, 
+    glm::vec3 absWind, 
+    glm::vec3 normWind, 
+    glm::vec3 gravity, 
+    float Ka
+    )
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;

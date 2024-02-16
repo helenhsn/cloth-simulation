@@ -6,7 +6,7 @@
 #include <iostream>
 
 
-extern __device__ __host__ float dot(glm::vec3 a, glm::vec3 b)
+extern inline __device__ __host__ float dot(glm::vec3 a, glm::vec3 b)
 {
     return a.x*b.x + a.y*b.y + a.z*b.z;
 }
@@ -18,7 +18,7 @@ extern __device__ __host__ glm::vec3 normalize(glm::vec3 v)
     if (res < 0.0000001) return v;
     return v/sqrt(res);
 }
-extern __device__ __host__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
+extern inline __device__ __host__ glm::vec3 cross(glm::vec3 a, glm::vec3 b)
 {
     return  glm::vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
 }
@@ -38,7 +38,7 @@ extern __host__ void bindBuffer(float * &d_ptr, cudaGraphicsResource_t &res)
     cudaErrorCheck(cudaGraphicsResourceGetMappedPointer((void **) &d_ptr, &memory_size, res));
 }
 
-extern __host__ void unbindBuffer(cudaGraphicsResource_t res)
+extern inline __host__ void unbindBuffer(cudaGraphicsResource_t res)
 {
     // unmap buffer objects (vbo, ebo) so that OpenGL can use them in the rendering loop!
     cudaErrorCheck(cudaGraphicsUnmapResources(1, &res, 0));
