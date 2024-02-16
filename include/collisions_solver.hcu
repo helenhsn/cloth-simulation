@@ -562,15 +562,6 @@ class CollisionSolver
 
 
         resetCollisionBuffers<<<gridDim, blockDim>>>(cloth->getVerticesNb(), cloth->N(), m_hitColliderTri, m_hitPointInfo);
-        cudaEvent_t timerStart;
-        cudaEventCreate(&timerStart);
-
-        cudaEvent_t timerEnd;
-        cudaEventCreate(&timerEnd);
-        
-    
-        float timeElapsed;
-
 
         for (int i=0; i< (int) m_colliders.size(); ++i)
         {   
@@ -578,9 +569,6 @@ class CollisionSolver
 
             for (float dir = -1.0; dir < 2.0; dir+=2.0)
             {
-
-                cudaEventRecord(timerStart, 0);
-                cudaEventSynchronize(timerStart);
                 // raytracing using velocity
                 collisionDetection<<<gridDim, blockDim>>>(
                     i,
@@ -596,12 +584,6 @@ class CollisionSolver
                     dir
                 );
                 cudaErrorCheck(cudaDeviceSynchronize());
-
-                cudaEventRecord(timerEnd, 0);
-                cudaEventSynchronize(timerEnd);
-
-                cudaEventElapsedTime(&timeElapsed, timerStart, timerEnd);
-                printf("\n COLLIDER ID = %i // COLLISION DETECTION ELAPSED TIME = %f ms",i, timeElapsed);
             }
         }
         collisionResponse<<<gridDim, blockDim>>>(
