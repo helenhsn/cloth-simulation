@@ -5,6 +5,6 @@ No other libraries is necessary as all third party libraries are included in the
 
 ## How to run the simulator
 
-Simply go inside the build/ subdirectory and type ```cmake .. ```then ```make```.
-Inside the main directory, type ```./build/cloth-sim``` and enjoy!
+Simply go inside the build/ subdirectory and type ```cmake .. ``` followed by ```make```.
+Once the compilation is over, go inside the main directory and type ```./build/cloth-sim```. Enjoy!
 
