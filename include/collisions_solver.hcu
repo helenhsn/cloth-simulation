@@ -17,7 +17,7 @@ struct NodeInfo {
     int index;
     float distToBVH;
 };
-__device__ glm::vec3 interpolateNormal(Triangle &tri, glm::vec4 hitInfo)
+__device__ inline glm::vec3 interpolateNormal(Triangle &tri, glm::vec4 hitInfo)
 {
     return hitInfo.x*tri.normal0 + hitInfo.y*tri.normal1 + hitInfo.z*tri.normal2;
 }
@@ -36,9 +36,9 @@ __device__ struct NodeInfo &pop(struct NodeInfo* stack, int *size)
     return stack[*size];
 }
 
-__device__ glm::vec4 computeIntersection(Triangle &tri, int triIdx, glm::vec4 infos, glm::vec3 dir)
+__device__ inline glm::vec4 computeIntersection(Triangle &tri, int triIdx, glm::vec4 infos, float det, glm::vec3 dir)
 {
-    return glm::vec4(tri.p0*infos.x + tri.p1*infos.y +tri.p2*infos.z + infos.w*dir, infos.w);
+    return glm::vec4(tri.p0*infos.x + tri.p1*infos.y +tri.p2*infos.z + infos.w*dir, infos.w)/det;
 }
 
 __device__ bool intersectSegmentTriangle(
@@ -72,7 +72,6 @@ __device__ bool intersectSegmentTriangle(
     float res = dot(normalize(qp), normalize(n));
     if (res < EPS) 
     {
-        // if (tid == 6746 && (triIdx==10826 || triIdx==10827 || triIdx==10828 || triIdx == 10829)) printf("\n TID = %i 1// NOT INTERSECTING FOR ORIGIN = %f %f %f && dir = %f %f %f n = %f %f %f // res = %f", tid, origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, n.x, n.y, n.z, res);
         return false; // ray is parallel to or points away from triangle
     }
     
@@ -81,7 +80,6 @@ __device__ bool intersectSegmentTriangle(
     glm::vec2 limits = glm::vec2(0.01f, 0.9f)*CLOTH_THICKNESS*det;
     if (t < limits.x || t > limits.y || abs(t) >= abs((*hitPtInfos).w) )
     {
-        // if (tid == 6746 && (triIdx==10826 || triIdx==10827 || triIdx==10828 || triIdx == 10829)) printf("\nTID 2// NOT INTERSECTING FOR DIR = %f %f %f && ORIGIN = %f %f %f && t = %f , hitInfoW = %f", dir.x, dir.y, dir.z, origin.x, origin.y, origin.z, t, (*hitPtInfos).w);
         return false;
     }
 
@@ -89,7 +87,6 @@ __device__ bool intersectSegmentTriangle(
     v =  dot(ac, e);
     if (v < -EPS || v - det > EPS) 
     {
-        // if (tid == 6746 && (triIdx==10826 || triIdx==10827 || triIdx==10828 || triIdx == 10829)) printf("\n TID = %i 3// NOT INTERSECTING FOR ORIGIN = %f %f %f && triIdx = %i && ab = %f %f %f \n DATA :  v = %f // det = %f\n\n ", tid, origin.x, origin.y, origin.z, triIdx, ab.x, ab.y, ab.z, v, det);
         return false; 
     }
 
@@ -97,23 +94,17 @@ __device__ bool intersectSegmentTriangle(
     if (w < -EPS || w - det > EPS) 
     {
 
-        // if (tid == 6746 && (triIdx==10826 || triIdx==10827 || triIdx==10828 || triIdx == 10829)) printf("\n TID = %i 4// NOT INTERSECTING FOR ORIGIN = %f %f %f && triIdx = %i // v = %f // w = %f // det = %f && ab = %f %f %f // ac = %f %f %f", tid, origin.x, origin.y, origin.z, triIdx, v, w, det, ab.x, ab.y, ab.z, ac.x, ac.y, ac.z);
         return false;
     }
 
     u = det - v - w;
     if (u < -EPS)
     {   
-
-        // if (tid == 6746 && (triIdx==10826 || triIdx==10827 || triIdx==10828 || triIdx == 10829)) printf("\n TID = %i 5// NOT INTERSECTING FOR ORIGIN = %f %f %f // triIdx=%i \n v = %f // w = %f // det = %f", tid, origin.x, origin.y, origin.z, triIdx, v, w, det);
         return false;
     }
 
+    *hitPtInfos = computeIntersection(tri, triIdx, glm::vec4(u, v, w, t), det, qp);
 
-    glm::vec4 infos = glm::vec4(u, v, w, t)/det;
-    *hitPtInfos = computeIntersection(tri, triIdx, infos, qp);
-
-    // if (tid==6746) printf("\n HIT info = %f %f %f // tid = %i tri = %i // dir = %f %f %f // t = %f", (*hitPtInfos).x, (*hitPtInfos).y, (*hitPtInfos).z, tid, triIdx, dir.x, dir.y, dir.z, infos.w);
     return true;
 
 }
@@ -212,15 +203,15 @@ __device__ void refitBVRec(
     }
 }
 
-__device__ void updateAABB(
-    Node *node,
-    Node *leftChild,
-    Node *rightChild
-)
-{
-    node->aabb.aabbMin = min(leftChild->aabb.aabbMin, rightChild->aabb.aabbMin);
-    node->aabb.aabbMax = min(leftChild->aabb.aabbMax, rightChild->aabb.aabbMax);
-}
+// __device__ void updateAABB(
+//     Node *node,
+//     Node *leftChild,
+//     Node *rightChild
+// )
+// {
+//     node->aabb.aabbMin = min(leftChild->aabb.aabbMin, rightChild->aabb.aabbMin);
+//     node->aabb.aabbMax = min(leftChild->aabb.aabbMax, rightChild->aabb.aabbMax);
+// }
 
 __global__ void refitLeafNodes(
     int maxTid,
@@ -337,7 +328,7 @@ __global__ void refitParentNodes(
 //     }
 // }
 
-__global__ void intersectBVH(
+__global__ void collisionDetection(
     int colliderId,
     int N, 
     int maxTid, 
@@ -348,7 +339,8 @@ __global__ void intersectBVH(
     GLuint *triIndices, 
     glm::ivec2 *hitColliderTri, 
     glm::vec4 *hitPointInfo, 
-    float factor)
+    float factor
+    )
 {
 
     int j = threadIdx.x + blockIdx.x*blockDim.x;
@@ -358,8 +350,6 @@ __global__ void intersectBVH(
 
     glm::ivec2 hitColTri = hitColliderTri[tid];
     glm::vec4 hitInfo = hitPointInfo[tid];
-
-
 
     glm::vec3 dir = dirs[tid] * factor;
     
@@ -430,10 +420,9 @@ __global__ void intersectBVH(
 }
 
 
-__global__ void updateVelocity(
+__global__ void collisionResponse(
     int N, 
     int maxTid, 
-    glm::vec3 *color, 
     glm::vec3 *pos, 
     glm::vec3 *vel, 
     glm::vec3 *OutFBuffer, 
@@ -454,8 +443,6 @@ __global__ void updateVelocity(
     glm::ivec2 hit = hitColliderTri[tid];
 
     glm::vec3 collisionF = glm::vec3(0.0f);
-
-    glm::vec3 colorDebug = glm::vec3(1.0f, 0.0f, 0.0f);
 
     if (tid < maxTid)
     {
@@ -502,14 +489,12 @@ __global__ void updateVelocity(
             
             collisionF = R + friction;
 
-            vel[tid] = glm::vec3(0.0f); //+= h*collisionF/unitM; // velocity needs to be canceled as we don't want the point to keep sinking inside the collider
+            vel[tid] = glm::vec3(0.0f); // velocity needs to be canceled as we don't want the point to keep sinking inside the collider
 
             glm::vec4 hitInfo = hitPointInfo[tid];
             pos[tid] = glm::vec3(hitInfo.x, hitInfo.y, hitInfo.z) + 0.1f*CLOTH_THICKNESS*n; // slightly offsetting the position of the vertex
-            
-            if (hit.x == 2) colorDebug = glm::vec3(1.0, 1.0, 0.2);
+
         }
-    color[tid] = colorDebug;
     OutFBuffer[tid] = collisionF;
     }
 }
@@ -627,9 +612,8 @@ class CollisionSolver
 
             for (float dir = -1.0; dir < 2.0; dir+=2.0)
             {
-
                 // raytracing using velocity
-                intersectBVH<<<gridDim, blockDim>>>(
+                collisionDetection<<<gridDim, blockDim>>>(
                     i,
                     cloth->N(), 
                     cloth->getVerticesNb(), 
@@ -645,10 +629,9 @@ class CollisionSolver
                 cudaErrorCheck(cudaDeviceSynchronize());
             }
         }
-        updateVelocity<<<gridDim, blockDim>>>(
+        collisionResponse<<<gridDim, blockDim>>>(
             cloth->N(), 
-            cloth->getVerticesNb(), 
-            (glm::vec3 *) cloth->getDataPtr(3),
+            cloth->getVerticesNb(),
             (glm::vec3 *) cloth->getDataPtr(0),
             v,
             m_collisionsFBuffer,

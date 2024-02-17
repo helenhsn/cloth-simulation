@@ -55,7 +55,7 @@ class Simulation
         for (int i=0; i<m_params->nbSubSteps; i++) 
         {
             m_solver->step(m_grid, m_params, m_collisionSolver->collisionsFBuffer());
-            m_collisionSolver->solve(m_grid, m_solver->getVelocities(), m_params, m_solver->getFBuffer());
+            if (m_params->isCollisions) m_collisionSolver->solve(m_grid, m_solver->getVelocities(), m_params, m_solver->getFBuffer());
         }
         m_collisionSolver->unBindCollidersCudaData();
         m_grid->unbindCudaData();

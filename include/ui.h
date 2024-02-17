@@ -61,6 +61,11 @@ class GUI
         {
             simParams->changePaused();
         }
+        if (ImGui::Button("COLLISIONS ACTIVATED", ImVec2(150, 30))) 
+        {
+            simParams->isCollisions = !simParams->isCollisions;
+        }
+        
 
         if (ImGui::Button("CLOTH WIREFRAME", ImVec2(150, 30))) 
         {

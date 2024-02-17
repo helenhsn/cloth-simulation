@@ -11,6 +11,7 @@ struct SimulationParams
     float timeStep;
     int nbSubSteps;
     bool isPaused;
+    bool isCollisions;
 
     // solver params
     float Ks;
@@ -49,6 +50,7 @@ struct SimulationParams
     timeStep(0.0016f),
     nbSubSteps(1), 
     isPaused(false),
+    isCollisions(true),
     Ks(400.0f), 
     Kd(10.0f), 
     Ka(0.1f), 

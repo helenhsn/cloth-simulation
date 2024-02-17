@@ -65,13 +65,13 @@ int main()
 
 
     // setting simulation objects (drawables)
-    ShaderProgram ground_pgrm("../shaders/ground.vs", "../shaders/ground.fs");
-    ShaderProgram simple_pgrm("../shaders/sphere.vs", "../shaders/sphere.fs");
-    ShaderProgram cloth_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
+    ShaderProgram ground_pgrm("shaders/ground.vs", "shaders/ground.fs");
+    ShaderProgram simple_pgrm("shaders/sphere.vs", "shaders/sphere.fs");
+    ShaderProgram cloth_pgrm("shaders/cloth.vs", "shaders/cloth.fs");
 
 
     glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.08f, 1.0f, 0.08f));
-    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 5.0f, 0.0f));
+    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 4.8f, 0.0f));
     Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 128);
     
     Simulation *sim = new Simulation(cloth);
@@ -89,19 +89,23 @@ int main()
     glm::mat4 scaleCollider = glm::scale(glm::mat4(1.0f), 0.03f*glm::vec3(1.0f, 1.0f, 1.0f));
     glm::mat4 transCollider = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 3.0f, 5.0f));
     glm::mat4 modelCollider = transCollider*scaleCollider;
-    MeshFromPLY *anotherCollider = new MeshFromPLY(simple_pgrm.glid, modelCollider, "../assets/teapot.ply");
+    MeshFromPLY *anotherCollider = new MeshFromPLY(simple_pgrm.glid, modelCollider, "assets/teapot.ply");
 
 
     scaleCollider = glm::scale(glm::mat4(1.0f), 0.38f*glm::vec3(1.5f, 1.0f, 1.0f));
     glm::mat4 rotCollider = glm::rotate(glm::mat4(1.0f), 3.14159266f/2.0f, glm::vec3(0.0f, 1.0f, 0.0f));
     transCollider = glm::translate(glm::mat4(1.0f), glm::vec3(-7.0f, 1.50f, 5.0f));
     modelCollider = rotCollider*transCollider*scaleCollider;
-    MeshFromOBJ *anotherCollider2 = new MeshFromOBJ(simple_pgrm.glid, modelCollider, "../assets/heart.obj");
+    MeshFromOBJ *anotherCollider2 = new MeshFromOBJ(simple_pgrm.glid, modelCollider, "assets/heart.obj");
 
 
     sim->addCollider(anotherCollider2);
     sim->addCollider(ground);
     // sim->addCollider(cloth);
+
+    cudaDeviceProp prop;
+    cudaErrorCheck(cudaGetDeviceProperties(&prop, 0));
+
 
     // Init GUI (imgui window)
     GUI *gui = new GUI(window);    
