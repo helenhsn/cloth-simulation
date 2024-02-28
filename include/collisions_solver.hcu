@@ -157,131 +157,158 @@ __device__ bool intersectRayAABB(
     
 }
 
-__device__ void refitBVRec(
-    int idx,
-    Node *BVH,
-    Triangle *triCloth,
-    GLuint *triIdxCloth, 
-    glm::vec3 *verticesCloth
+
+__device__ void updateAABB(
+    Node *node,
+    Node &leftChild,
+    Node &rightChild
 )
 {
-    printf("\nREC idx = %i", idx);
-    Node *node = &BVH[idx];
+    AABB *aabb = &node->aabb;
+    aabb->aabbMin = min(leftChild.aabb.aabbMin, rightChild.aabb.aabbMin);
+    aabb->aabbMax = max(leftChild.aabb.aabbMax, rightChild.aabb.aabbMax);
+}
 
-    if (node->triCount != 0) // leaf node 
+
+__global__ void resetUpdate(
+    int maxTid,
+    int N,
+    Node *BVH
+)
+{
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+
+    int tid = j*N +i;
+    if (tid < maxTid)
     {
-        node->aabb = {};
-
-        for (int i=0; i<node->triCount; ++i)
-        {
-            Triangle tri = triCloth[triIdxCloth[node->leftIdx + i]];
-            // printf("tri vertices idx = %i %i %i", tri.i0, tri.i1, tri.i2);
-            // printf("tri vertices idx = %i %i %i // first val = %f %f %f", tri.i0, tri.i1, tri.i2, verticesCloth[tri.i0].x,  verticesCloth[tri.i0].y,  verticesCloth[tri.i0].z);
-            glm::vec3 p0 = verticesCloth[tri.i0];
-            glm::vec3 p1 = verticesCloth[tri.i1];
-            glm::vec3 p2 = verticesCloth[tri.i2];
-
-            glm::vec3 triMin = min(min(p0, p1), p2);
-            glm::vec3 triMax = max(max(p0, p1), p2);
-
-            node->aabb.aabbMin = min(node->aabb.aabbMin, triMin);
-            node->aabb.aabbMax = max(node->aabb.aabbMax, triMax);
-        }
-    } 
-    else
-    {
-        int leftChildIdx = node->leftIdx;
-        int rightChildIdx = leftChildIdx + 1;
-
-        refitBVRec(leftChildIdx, BVH, triCloth, triIdxCloth, verticesCloth);
-        refitBVRec(rightChildIdx, BVH, triCloth, triIdxCloth, verticesCloth);
-
-        Node  *leftChild = &BVH[leftChildIdx];
-        Node  *rightChild = &BVH[rightChildIdx];
-        node->aabb.aabbMin = min(leftChild->aabb.aabbMin, rightChild->aabb.aabbMin);
-        node->aabb.aabbMax = max(leftChild->aabb.aabbMax, rightChild->aabb.aabbMax);
+        Node *node = &BVH[tid];
+        node->isUpdated = false;
     }
 }
 
-// __device__ void updateAABB(
-//     Node *node,
-//     Node *leftChild,
-//     Node *rightChild
+__global__ void updateBVH(
+    int maxTid,
+    int N,
+    int *leafNodes,
+    int *reductionBuff,
+    Node *BVH,
+    Triangle *triangles,
+    GLuint *triIndices, 
+    glm::vec3 *vertices
+)
+{
+    // extern __shared__ int sBuff[];
+    // int tid = threadIdx.x;
+    // int i = tid + blockIdx.x*blockDim.x;
+    int i = threadIdx.y + blockIdx.y*blockDim.y;
+    int j = threadIdx.x + blockIdx.x*blockDim.x;
+
+    int tid = j*N +i;
+
+    // sBuff[tid] = reductionBuff[i];
+    // __syncthreads();
+    if (tid <maxTid)
+    {   
+        int nodeId = leafNodes[tid];
+        Node *node = &BVH[nodeId];
+        do
+        {
+            if (tid==0) printf("\n ---");
+            printf("\nCURRENT NODE = %i", nodeId);
+            __syncthreads();
+
+            if (node->triCount != 0)
+            {
+                AABB *aabb = &node->aabb;
+
+                for (int i=0; i<node->triCount; ++i)
+                {
+                    Triangle tri = triangles[triIndices[node->leftIdx + i]];
+                    // printf("tri vertices idx = %i %i %i", tri.i0, tri.i1, tri.i2);
+                    // printf("tri vertices idx = %i %i %i // first val = %f %f %f", tri.i0, tri.i1, tri.i2, verticesCloth[tri.i0].x,  verticesCloth[tri.i0].y,  verticesCloth[tri.i0].z);
+                    glm::vec3 p0 = vertices[tri.i0];
+                    glm::vec3 p1 = vertices[tri.i1];
+                    glm::vec3 p2 = vertices[tri.i2];
+
+                    glm::vec3 triMin = min(min(p0, p1), p2);
+                    glm::vec3 triMax = max(max(p0, p1), p2);
+
+                    aabb->aabbMin = min(node->aabb.aabbMin, triMin);
+                    aabb->aabbMax = max(node->aabb.aabbMax, triMax);
+                }
+                node->isUpdated = true;
+            }
+            else
+            {
+                Node *leftChild = &BVH[node->leftIdx];
+                Node *rightChild = &BVH[node->leftIdx+1];
+
+                if (leftChild->isUpdated && rightChild->isUpdated)
+                {
+                    updateAABB(node, *leftChild, *rightChild);
+                    node->isUpdated = true;
+                }
+            }
+            if (node->isUpdated)
+            {
+                printf("\n NODE UPDATED <!> = %i", nodeId);
+                int parentId = node->parentIdx;
+                Node *parentNode = &BVH[parentId];
+                if (parentNode->leftIdx == nodeId && nodeId > 0)
+                {
+                    nodeId = parentId;
+                    node = parentNode;
+                }
+
+            }
+        } while (!node->isUpdated);
+    }
+}
+
+// __global__ void reduction(
+
+//     int *reductionBuff,
+//     Node *BVH
 // )
 // {
-//     node->aabb.aabbMin = min(leftChild->aabb.aabbMin, rightChild->aabb.aabbMin);
-//     node->aabb.aabbMax = min(leftChild->aabb.aabbMax, rightChild->aabb.aabbMax);
-// }
+//     extern __shared__ int sBuff[];
 
-// __global__ void initFitting(
-//     int maxTid,
-//     int N,
-//     int **indexData,
-//     Node *BVH,
-//     Triangle *triCloth,
-//     GLuint *triIdxCloth, 
-//     glm::vec3 *verticesCloth
-// )
-// {
-//     // int j = threadIdx.x + blockIdx.x*blockDim.x;
-//     // int i = threadIdx.y + blockIdx.y*blockDim.y;
+//     int tid = threadIdx.x;
+//     int i = tid + blockIdx.x*blockDim.x;
 
-//     // int tid = j*N+i;
+//     sBuff[tid] = reductionBuff[i];
+//     __syncthreads();
 
-//     NodeInfo stack[MAX_STACK_SIZE];
-//     int stackSize = 0;
-
-//     NodeInfo rootInfo = {0, 0.0f};
-//     push(stack, &stackSize, rootInfo);
-
-//     while (stackSize != 0)
+//     // hypothesis: the array size is of length blockDim.x
+//     for (int s = 2; s<blockDim.x; s<<=1)
 //     {
-//         NodeInfo &currNodeInfo = pop(stack, &stackSize);
-//         Node *currentNode = &BVH[currNodeInfo.index];
+//         printf("\ntid = %i, s = %i", tid, s);
 
-//         if (currentNode->triCount != 0)
+//         if (tid%s==0)
 //         {
-//             currentNode->aabb = {};
-
-//             for (int i=0; i<currentNode->triCount; ++i)
+//             int leftChildIdx = sBuff[tid]; // COALESCED ACCESS w/ OTHER THREADS<!>
+//             if (leftChildIdx > -1)
 //             {
-//                 Triangle tri = triCloth[triIdxCloth[currentNode->leftIdx + i]];
-//                 // printf("tri vertices idx = %i %i %i", tri.i0, tri.i1, tri.i2);
-//                 // printf("tri vertices idx = %i %i %i // first val = %f %f %f", tri.i0, tri.i1, tri.i2, verticesCloth[tri.i0].x,  verticesCloth[tri.i0].y,  verticesCloth[tri.i0].z);
-//                 glm::vec3 p0 = verticesCloth[tri.i0];
-//                 glm::vec3 p1 = verticesCloth[tri.i1];
-//                 glm::vec3 p2 = verticesCloth[tri.i2];
-
-//                 glm::vec3 triMin = min(min(p0, p1), p2);
-//                 glm::vec3 triMax = max(max(p0, p1), p2);
-
-//                 currentNode->aabb.aabbMin = min(currentNode->aabb.aabbMin, triMin);
-//                 currentNode->aabb.aabbMax = max(currentNode->aabb.aabbMax, triMax);
-//             }
-
-//             currentNode->isUpdatedBV = true;
-
-
-//         }
-//         else
-//         {
-//             NodeInfo leftChildInfo = NodeInfo {currentNode->leftIdx, 0.0f};
-//             push(stack, &stackSize, leftChildInfo);
-//             Node *leftChild = &BVH[leftChildInfo.index];
-
-
-//             NodeInfo rightChildInfo = NodeInfo {currentNode->leftIdx+1, 0.0f};
-//             push(stack, &stackSize, rightChildInfo);
-//             Node *rightChild = &BVH[rightChildInfo.index];
-
-//             if (leftChild->isUpdatedBV && rightChild->isUpdatedBV)
-//             {
-//                 updateAABB(currentNode, leftChild, rightChild);
-//                 leftChild->isUpdatedBV = false;
-//                 rightChild->isUpdatedBV = false;
+//                 Node &leftChild = BVH[leftChildIdx];
+//                 printf("\ntid = %i, s = %i, blockDim.x/2 = %i && element = %i", tid, s, blockDim.x/2, leftChildIdx);
                 
+//                 int rightChildIdx = sBuff[tid+s/2]; // COALESCED ACCESS w/ OTHER THREADS<!>
+
+//                 if (rightChildIdx > -1)
+//                 {
+//                     Node &rightChild = BVH[rightChildIdx];
+//                     Node *parent = &BVH[leftChild.parentIdx];
+//                     updateAABB(parent, leftChild, rightChild);
+//                     printf("\n UPDATING BOUNDING BOX OF PARENT AT idx = %i // CHILDREN = (l) %i && (r) %i \n tid = %i, s = %i", 
+//                     leftChild.parentIdx, leftChildIdx, rightChildIdx, tid, s);
+//                 }
+
+
+//                 sBuff[tid] = leftChild.parentIdx;
 //             }
 //         }
+//         __syncthreads();
 //     }
 // }
 
@@ -297,7 +324,7 @@ __global__ void collisionDetection(
     glm::ivec2 *hitColliderTri, 
     glm::vec4 *hitPointInfo, 
     float factor
-    )
+)
 {
 
     int j = threadIdx.x + blockIdx.x*blockDim.x;
@@ -470,12 +497,39 @@ __global__ void resetCollisionBuffers(int maxTid, int N, glm::ivec2 *hitIdx, glm
     }
 }
 
+__global__ void rotation(
+    int maxTid,
+    int N,
+    glm::vec3 *vertices,
+    glm::mat4 rot,
+    glm::mat4 model,
+    glm::mat4 modelInv
+)
+{
+    int j = threadIdx.x + blockDim.x*blockIdx.x;
+    int i = threadIdx.y + blockDim.y*blockIdx.y;
+
+    int tid = j*N + i;
+
+    if (tid < maxTid)
+    {
+        glm::vec3 v = vertices[tid];
+        glm::vec4 newVec = model * rot * modelInv * glm::vec4(v.x, v.y, v.z, 1.0f);
+
+        vertices[tid] = glm::vec3(newVec.x, newVec.y, newVec.z);
+    }
+
+
+}
+
 struct Collider
 {
     Mesh *colliderPtr;
     BVH *bvh;
 
     Node *treeCuda;
+    int *leafNodesCuda;
+    int *reductionBuffCuda;
     Triangle *trianglesCuda;
     GLuint *triIndicesCuda;
 
@@ -497,6 +551,13 @@ struct Collider
         cudaErrorCheck(cudaMalloc((void **) &treeCuda, sizeof(Node)* (bvh->getNbNodes()) ));
         cudaErrorCheck(cudaMemcpy(treeCuda, bvh->getTree(), sizeof(Node)*bvh->getNbNodes(), cudaMemcpyHostToDevice));
 
+        cudaErrorCheck(cudaMalloc((void **) &leafNodesCuda, sizeof(int)* (bvh->sizeLeafNodes()) ));
+        cudaErrorCheck(cudaMemcpy(leafNodesCuda, bvh->getLeafNodes(), sizeof(int)*bvh->sizeLeafNodes(), cudaMemcpyHostToDevice));
+
+        cudaErrorCheck(cudaMalloc((void **) &reductionBuffCuda, sizeof(int)* (bvh->sizeReducBuff()) ));
+        cudaErrorCheck(cudaMemcpy(reductionBuffCuda, bvh->getReductionBuff(), sizeof(int)*bvh->sizeReducBuff(), cudaMemcpyHostToDevice));
+
+
         cudaErrorCheck(cudaMalloc((void **) &trianglesCuda, sizeof(Triangle)* bvh->getNbTri() ));
         cudaErrorCheck(cudaMemcpy(trianglesCuda, bvh->tri(), sizeof(Triangle) * bvh->getNbTri(), cudaMemcpyHostToDevice));
 
@@ -513,15 +574,12 @@ class CollisionSolver
     CollisionSolver(Plane *cloth) : m_verticesNb(cloth->getVerticesNb()) {
         cudaErrorCheck(cudaMalloc((void **) &m_collisionsFBuffer, sizeof(glm::vec3)*m_verticesNb));
 
-
         std::vector<glm::vec3> Fbuffers(m_verticesNb, glm::vec3(0.0f));
         cudaErrorCheck(cudaMalloc((void **) &m_collisionsFBuffer, sizeof(glm::vec3)*m_verticesNb));
         cudaErrorCheck(cudaMemcpy(m_collisionsFBuffer, Fbuffers.data(), sizeof(glm::vec3)*m_verticesNb, cudaMemcpyHostToDevice));
 
         cudaErrorCheck(cudaMalloc((void **) &m_hitColliderTri, sizeof(glm::ivec2)*m_verticesNb));
         cudaErrorCheck(cudaMalloc((void **) &m_hitPointInfo, sizeof(glm::vec4)*m_verticesNb));
-
-
 
     };
 
@@ -535,33 +593,64 @@ class CollisionSolver
 
     void solve(Plane *cloth, glm::vec3 *v, SimulationParams *params, glm::vec3 *FBuff) 
     {
-        //1 KERNEL CALL = update BVs
+        // UPDATING BVH
+        Collider updtCollider = m_colliders[0];
+
+        printf("\n--------------------------- SEPARATION ---------------------------");
+
+        int sqrtN = int(ceil(sqrt(updtCollider.colliderPtr->getVerticesNb())));
+        dim3 colGrid((sqrtN+31)/32, (sqrtN+31)/32, 1);
+        dim3 colBlock(32, 32, 1);
+        glm::mat4 rot = glm::rotate(glm::mat4(1.0f), 0.01f, glm::vec3(0.0f, 1.0f, 0.0f));
+        rotation<<<colGrid, colBlock>>>(
+            updtCollider.colliderPtr->getVerticesNb(),
+            sqrtN,
+            (glm::vec3 *) updtCollider.colliderPtr->getDataPtr(0),
+            rot,
+            updtCollider.colliderPtr->getModelMatrix(),
+            glm::inverse(updtCollider.colliderPtr->getModelMatrix())
+        );
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+        sqrtN = int(ceil(sqrt(updtCollider.bvh->getNbNodes())));
+        colGrid = dim3((sqrtN+31)/32, (sqrtN+31)/32, 1);
+        colBlock = dim3(32, 32, 1);
+        resetUpdate<<<colGrid, colBlock>>>(
+            updtCollider.bvh->getNbNodes(),
+            sqrtN,
+            updtCollider.treeCuda
+        );
+        cudaErrorCheck(cudaDeviceSynchronize());
+
+
+        sqrtN = int(ceil(sqrt(updtCollider.bvh->sizeLeafNodes())));
+        colGrid = dim3((sqrtN+31)/32, (sqrtN+31)/32, 1);
+        colBlock = dim3(32, 32, 1);
+
+        updateBVH<<<colGrid, colBlock>>>(
+            updtCollider.bvh->sizeLeafNodes(),
+            sqrtN,
+            updtCollider.leafNodesCuda,
+            updtCollider.reductionBuffCuda,
+            updtCollider.treeCuda,
+            updtCollider.trianglesCuda,
+            updtCollider.triIndicesCuda,
+            (glm::vec3 *) updtCollider.colliderPtr->getDataPtr(0)
+            );
+        cudaErrorCheck(cudaDeviceSynchronize());
+
 
         // 1 KERNEL CALL = cast rays from 2 directions : normals AND velocity vectorz
         // resolve intersections (intersection AABB/AABB + primary test = ray/triangle intersection)
         // -> fill a bool array saying whether there was a collision or not + another array of 3d vectors containing pt of intersection <?>
         
-        
-        // 1 KERNEL CALL = add penalty force accordingly  ???
-        // Collider updtCollider = m_colliders[(int) m_colliders.size() - 1];
-        // int sqrtN = sqrt(updtCollider.bvh->getNbNodes());
-        // int roundN = int(ceil(sqrtN+31)/32);
-        // dim3 gridBVHCloth(1, 1, 1);
-        // dim3 blockBVHCloth(1, 1, 1);
-        // updateBVH<<<gridBVHCloth, blockBVHCloth>>>(
-        //     updtCollider.bvh->getNbNodes(), 
-        //     sqrtN,
-        //     updtCollider.treeCuda, 
-        //     updtCollider.trianglesCuda,
-        //     updtCollider.triIndicesCuda,a
-        //     (glm::vec3 *) updtCollider.colliderPtr->getDataPtr(0)
-        //     );
-        // cudaErrorCheck(cudaDeviceSynchronize());
         dim3 gridDim((cloth->N() + 31)/32, (cloth->N() + 31)/32, 1);
         dim3 blockDim(32, 32, 1);
 
 
         resetCollisionBuffers<<<gridDim, blockDim>>>(cloth->getVerticesNb(), cloth->N(), m_hitColliderTri, m_hitPointInfo);
+        cudaErrorCheck(cudaDeviceSynchronize());
+
 
         for (int i=0; i< (int) m_colliders.size(); ++i)
         {   

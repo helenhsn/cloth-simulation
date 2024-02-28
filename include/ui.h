@@ -15,7 +15,7 @@ class GUI
     GUI(GLFWwindow *window)
     :
     clothWireframe(false),
-    colliderWireframe(true)
+    colliderWireframe(false)
     {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();

@@ -211,6 +211,7 @@ public:
     std::vector<glm::vec3> &getNormals() {return m_data.normals;};
 
     void setPrimOpenGL(GLenum prim) { m_primOpenGL = prim; };
+    glm::mat4 getModelMatrix() {return m_data.model;};
 };
 
 void printMat3(const glm::mat4& matrix) {
@@ -327,8 +328,8 @@ class Sphere : public Mesh
 
     static Data init_mesh(glm::mat4x4 &model, float r)
     {
-        int rowCount = 30;
-        int columnCount = 30;
+        int rowCount = 10;
+        int columnCount = 10;
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec3> color;

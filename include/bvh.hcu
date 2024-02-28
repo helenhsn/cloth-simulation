@@ -85,13 +85,22 @@ struct Node
     // if triCount != 0 => BVHNode == leafNode => leftIdx == index of the first triangle 
     // (ORIGINAL INDEX -> index in the original list of triangles)
     int leftIdx; 
-    bool isUpdatedBV = false; // checks whether the actual bounding volume of the node has been updated. default is false
+
+    // reduction parameters: allows to do a bottom-up sweep
+    int parentIdx;
+    bool isUpdated = false;
 };
 
 class BVH
 {
     public:
-    BVH(Mesh *mesh) : m_NTri(mesh->getIndicesNb()/3), m_nodesNb(0), m_leafNodesNb(0)
+    BVH(Mesh *mesh) 
+    : 
+    m_NTri(mesh->getIndicesNb()/3), 
+    m_nodesNb(0), 
+    m_blockSize(16), 
+    minDepthLeaf(10e20),
+    maxDepthLeaf(0)
     {
         /**
          * Builds a BVH structure corresponding to the given mesh
@@ -122,18 +131,20 @@ class BVH
         Node &root = tree[0];
         root.leftIdx=0; 
         root.triCount=nbTri;
+        root.parentIdx=-1;
         m_nodesNb++;
 
         /* Code à évaluer */
         buildBV(0);
 
         // building recursively the BVH starting from root node
-        buildTreeRec(0);
+        buildTreeRec(0, 1);
         
         std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() -start;
         std::cout << "BVH built in " << elapsed_seconds.count() << "s -------------------- \n\n";
-        printf("\nNB LEAF NODES = %i \n\n", m_leafNodesNb);
+        printf("\nNB LEAF NODES = %i \n\n", m_leafNodes.size());
 
+        m_reductionBuff = m_leafNodes;
         // printTree(0);
 
     }
@@ -171,28 +182,38 @@ class BVH
 
 
     Node *getTree() {return tree;};
-    GLuint *triIndices() {return m_triIndices.data();};
 
+    int *getReductionBuff() {return m_reductionBuff.data();}
+    int sizeReducBuff() {return m_reductionBuff.size();}
+
+    int *getLeafNodes() {return m_leafNodes.data();}
+    int sizeLeafNodes() {return m_leafNodes.size();}
+
+    GLuint *triIndices() {return m_triIndices.data();};
     Triangle *tri() {return m_triangles.data();};
 
     int getNbNodes() {return m_nodesNb;};
     int getNbTri() {return m_triangles.size();};
     int getNbtriIdx() {return m_triIndices.size();};
+    int getBlockSize() {return m_blockSize;}
 
     private:
 
     int m_NTri; // number of triangles in mesh
     int m_nodesNb;
-    int m_leafNodesNb;
+    int m_blockSize;
+    int minDepthLeaf;
+    int maxDepthLeaf;
+
     std::vector<GLuint> m_triIndices; //
     std::vector<Triangle> m_triangles;
-
-
+    std::vector<int> m_reductionBuff;
+    std::vector<int> m_leafNodes;
     Node *tree;
 
     void printTriangles(const Node &node, int index)
     {
-        printf("PRINTING LEAF NODE at index = %i && with tri count = %i <<<<<\n", index, node.triCount);
+        printf("PRINTING LEAF NODE at index = %i && with tri count = %i && parent = %i<<<<<\n", index, node.triCount, node.parentIdx);
         for (int i =0; i<node.triCount; ++i)
         {
             Triangle &tri = m_triangles[m_triIndices[i+node.leftIdx]];
@@ -203,10 +224,16 @@ class BVH
     }
     void printNode(const Node &node, int idx)
     {
-        std::cout << "NODE at index = " << idx << " //  leftFirst  = " << node.leftIdx << std::endl;
+        std::cout << "NODE at index = " << idx << " //  leftFirst  = " << node.leftIdx << "parent = " << node.parentIdx << std::endl;
     }
 
-    void buildTreeRec(int currentIdx)
+    void registerLeafNode(int currentIdx, int depth)
+    {
+        m_leafNodes.push_back(currentIdx);
+        minDepthLeaf = min(minDepthLeaf, depth);
+        maxDepthLeaf = max(maxDepthLeaf, depth);
+    }
+    void buildTreeRec(int currentIdx, int depth)
     {
         Node &node = tree[currentIdx];
         // computing best position & axis for the AABB's split using SAH
@@ -217,23 +244,23 @@ class BVH
         float currentPos;
         float currentCost;
 
-        if (node.triCount <= 3) // don't continue if number of triangles is inferior to 3
+        if (node.triCount <= 2) // don't continue if number of triangles is inferior to 2
         {
-            m_leafNodesNb++;
+            registerLeafNode(currentIdx, depth);
             return;
         }
 
+        glm::vec3 AABBmin = node.aabb.aabbMin;
+        glm::vec3 AABBmax = node.aabb.aabbMax;
+        glm::vec3 step = (AABBmax - AABBmin)/199.0f;
         for (int axis = 0; axis<3; ++axis)
         {
-            float AABBmin = node.aabb.aabbMin[axis];
-            float AABBmax = node.aabb.aabbMax[axis];
-            float step = (AABBmax - AABBmin)/99.0;
 
-            for (int k = 0; k<100; ++k)
+            for (int k = 0; k<200; ++k)
             {
 
                 // testing one axis per triangle in the current node
-                currentPos = AABBmin + k * step;
+                currentPos = AABBmin[axis] + k * step[axis];
                 currentCost = evaluateCost(node, axis, currentPos);
                 if (currentCost < minCost)
                 {
@@ -243,12 +270,11 @@ class BVH
                 }
             }
         }
-        
         // if the current node's cost is less than best cost, then we can stop subdiving the tree here
         float currNodeCost = node.aabb.area() * node.triCount;  
         if (currNodeCost <= minCost) 
         {
-            m_leafNodesNb++;
+            registerLeafNode(currentIdx, depth);
             return;
         }
 
@@ -273,7 +299,7 @@ class BVH
         int leftTriCount = triIdx - node.leftIdx;
         if (leftTriCount == 0 || leftTriCount == node.triCount)  // if one of the sides is empty we do not split
         {
-            m_leafNodesNb++;
+            registerLeafNode(currentIdx, depth);
             return;
         }
     
@@ -282,12 +308,14 @@ class BVH
         int leftChild = m_nodesNb++;
         int rightChild = m_nodesNb++;
 
+        // TODO use adress?? -> more efficient than accessing tree[idx] each time...
         tree[leftChild].leftIdx = node.leftIdx;
         tree[leftChild].triCount = leftTriCount;
+        tree[leftChild].parentIdx = currentIdx;
 
         tree[rightChild].leftIdx = triIdx;
         tree[rightChild].triCount = node.triCount - leftTriCount;
-
+        tree[rightChild].parentIdx = currentIdx;
 
         buildBV(leftChild);
         buildBV(rightChild);
@@ -296,8 +324,9 @@ class BVH
         node.leftIdx = leftChild;
         node.triCount = 0;
 
-        buildTreeRec(leftChild);
-        buildTreeRec(rightChild);
+        buildTreeRec(leftChild, ++depth);
+        buildTreeRec(rightChild, ++depth);
+
     };
 
     float evaluateCost(Node &node, int &axis, float &splitPos) 
@@ -341,6 +370,7 @@ class BVH
             node.aabb.merge(leafTri);
         }
     }
+
 };
 
 
