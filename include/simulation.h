@@ -68,12 +68,12 @@ class Simulation
 
     CollisionSolver *collisionSolver() {return m_collisionSolver;};
 
-     void addCollider(Mesh *collider)
+     void addCollider(Mesh *collider, glm::vec3 *velPtr=nullptr)
     {
-        m_collisionSolver->addCollider(collider);
+        m_collisionSolver->addCollider(collider, velPtr);
     };
 
-    
+    glm::vec3 *getVelocitiesPtr() {return m_solver->getVelocities();};
     void reset()
     {
         // resetting cloth

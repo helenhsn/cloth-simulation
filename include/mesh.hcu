@@ -49,6 +49,7 @@ private:
     int m_indicesNb;
 
     GLenum m_primOpenGL;
+    
 protected:
     Data m_data; // stocking data to reset mesh when needed
 
@@ -270,7 +271,7 @@ class Plane: public Mesh
                 normals.push_back(n);
                 uv.push_back(glm::vec2((float) i/N_, (float) j/N_));
 
-                color.push_back(glm::vec3(1.0f, 0.0f, 0.0f));
+                color.push_back(glm::vec3(0.75f, 0.0f, 0.0f));
             }
         }
 
@@ -328,8 +329,8 @@ class Sphere : public Mesh
 
     static Data init_mesh(glm::mat4x4 &model, float r)
     {
-        int rowCount = 10;
-        int columnCount = 10;
+        int rowCount = 15;
+        int columnCount = 15;
         std::vector<glm::vec3> vertices;
         std::vector<glm::vec3> normals;
         std::vector<glm::vec3> color;

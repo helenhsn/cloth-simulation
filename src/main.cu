@@ -71,8 +71,8 @@ int main()
 
 
     glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.08f, 1.0f, 0.08f));
-    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 4.8f, 0.0f));
-    Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 128);
+    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 2.8f, 0.0f));
+    Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 64);
     
     Simulation *sim = new Simulation(cloth);
     
@@ -80,7 +80,7 @@ int main()
     glm::mat4 modelGround = glm::translate(glm::mat4(1.0f), -1000.0f*glm::vec3(1.0f, 0.0f, 1.0f))*scaleGround;
     Plane *ground = new Plane(ground_pgrm.glid, modelGround, 50, {true, false, false});
     
-    glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(5.0f, 3.0f, 5.0f));
+    glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 1.0f, 2.0f));
 
     glm::mat4 modelSimpleCollider = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 8.0f, 2.0f));
     Plane *simpleCollider = new Plane(simple_pgrm.glid, modelSimpleCollider, 10);

@@ -77,7 +77,7 @@ __device__ bool intersectSegmentTriangle(
     
     glm::vec3 ap = (origin - tri.p0);
     t = dot(ap, n);
-    glm::vec2 limits = glm::vec2(0.01f, 0.9f)*CLOTH_THICKNESS*det;
+    glm::vec2 limits = glm::vec2(0.001f, 0.9f)*CLOTH_THICKNESS*det;
     if (t < limits.x || t > limits.y || abs(t) >= abs((*hitPtInfos).w) )
     {
         return false;
@@ -332,13 +332,13 @@ __global__ void collisionDetection(
 
     int tid = j*N+i;
 
-    glm::ivec2 hitColTri = hitColliderTri[tid];
-    glm::vec4 hitInfo = hitPointInfo[tid];
 
-    glm::vec3 dir = dirs[tid] * factor;
     
     if (tid < maxTid)
     {
+        glm::ivec2 hitColTri = hitColliderTri[tid];
+        glm::vec4 hitInfo = hitPointInfo[tid];
+        glm::vec3 dir = dirs[tid] * factor;
         glm::vec3 origin = origins[tid];
 
         int rootIndex = 0;
@@ -397,18 +397,25 @@ __global__ void collisionDetection(
             }
 
         }    
-    }
-
     hitPointInfo[tid] = hitInfo;
     hitColliderTri[tid] = hitColTri;
+    }
+
 }
 
-
+__device__ glm::vec3 interpolateVelocity(
+    Triangle &tri,
+    glm::vec3 *velocities
+)
+{
+    return (velocities[tri.i0] + velocities[tri.i1] + velocities[tri.i2])/3.0f;
+}
 __global__ void collisionResponse(
     int N, 
     int maxTid, 
     glm::vec3 *pos, 
-    glm::vec3 *vel, 
+    glm::vec3 *velCloth, 
+    glm::vec3 **velCollidersPtr,
     glm::vec3 *OutFBuffer, 
     Triangle **trianglesPtr, 
     glm::ivec2 *hitColliderTri,
@@ -435,8 +442,9 @@ __global__ void collisionResponse(
 
             // TODO -> tangent & normal velocities => friction coef
             Triangle *tris = trianglesPtr[hit.x];
+            Triangle tri = tris[hit.y];
             glm::vec3 F = OutFBuffer[tid];
-            glm::vec3 n = normalize(tris[hit.y].normal);
+            glm::vec3 n = normalize(tri.normal);
 
             float Ncomp = dot(F,n);
             glm::vec3 N = Ncomp*n;
@@ -447,9 +455,7 @@ __global__ void collisionResponse(
             
             glm::vec3 T = F - N;
             float normT = sqrt(dot(T, T));
-
-
-            glm::vec3 v = vel[tid];
+            glm::vec3 v = velCloth[tid] - interpolateVelocity(tri, velCollidersPtr[hit.x]);
             glm::vec3 vT = v - dot(v,n)*n;
             float normVt = sqrt(dot(vT, vT));
 
@@ -469,11 +475,13 @@ __global__ void collisionResponse(
                 }
             }
 
-            if (dot(v, n) < EPS) vel[tid] = vT;
+            // if cloth vertex velocity is opposed to the normal of the collider's surface, we discard its normal component
+            // (we don't want the cloth to sink in its collider)
+            if (dot(v, n) < EPS) velCloth[tid] = vT;  
             
             collisionF = R + friction;
 
-            vel[tid] = glm::vec3(0.0f); // velocity needs to be canceled as we don't want the point to keep sinking inside the collider
+            // velCloth[tid] = glm::vec3(0.0f); // velocity needs to be canceled as we don't want the point to keep sinking inside the collider
 
             glm::vec4 hitInfo = hitPointInfo[tid];
             pos[tid] = glm::vec3(hitInfo.x, hitInfo.y, hitInfo.z) + 0.1f*CLOTH_THICKNESS*n; // slightly offsetting the position of the vertex
@@ -501,9 +509,11 @@ __global__ void rotation(
     int maxTid,
     int N,
     glm::vec3 *vertices,
+    glm::vec3 *velocities,
     glm::mat4 rot,
     glm::mat4 model,
-    glm::mat4 modelInv
+    glm::mat4 modelInv,
+    float h
 )
 {
     int j = threadIdx.x + blockDim.x*blockIdx.x;
@@ -514,9 +524,12 @@ __global__ void rotation(
     if (tid < maxTid)
     {
         glm::vec3 v = vertices[tid];
-        glm::vec4 newVec = model * rot * modelInv * glm::vec4(v.x, v.y, v.z, 1.0f);
+        glm::vec4 newVec4 = model * rot * modelInv * glm::vec4(v.x, v.y, v.z, 1.0f);
 
-        vertices[tid] = glm::vec3(newVec.x, newVec.y, newVec.z);
+        glm::vec3 newVec3 = glm::vec3(newVec4.x, newVec4.y, newVec4.z);
+
+        vertices[tid] = newVec3;
+        velocities[tid] = (newVec3 - v)/h; // euler explicit
     }
 
 
@@ -533,9 +546,16 @@ struct Collider
     Triangle *trianglesCuda;
     GLuint *triIndicesCuda;
 
-    Collider(Mesh *ptr, int nbVertices) : colliderPtr(ptr)
+    glm::vec3 *velocitiesCuda;
+
+
+    Collider(Mesh *ptr, int nbVertices, glm::vec3 *velocitiesCudaPtr) : colliderPtr(ptr)
     {
         bvh = new BVH(colliderPtr);
+        if (!velocitiesCudaPtr)
+        {
+            cudaErrorCheck(cudaMalloc((void **) &velocitiesCuda, sizeof(glm::vec3)* (ptr->getVerticesNb()) ));
+        }
         resetBuffers(nbVertices);
 
     }
@@ -606,9 +626,11 @@ class CollisionSolver
             updtCollider.colliderPtr->getVerticesNb(),
             sqrtN,
             (glm::vec3 *) updtCollider.colliderPtr->getDataPtr(0),
+            updtCollider.velocitiesCuda,
             rot,
             updtCollider.colliderPtr->getModelMatrix(),
-            glm::inverse(updtCollider.colliderPtr->getModelMatrix())
+            glm::inverse(updtCollider.colliderPtr->getModelMatrix()),
+            params->timeStep
         );
         cudaErrorCheck(cudaDeviceSynchronize());
 
@@ -680,6 +702,7 @@ class CollisionSolver
             cloth->getVerticesNb(),
             (glm::vec3 *) cloth->getDataPtr(0),
             v,
+            m_velsPtr,
             m_collisionsFBuffer,
             m_trisPtr,
             m_hitColliderTri,
@@ -693,15 +716,20 @@ class CollisionSolver
 
     };
 
-    void addCollider(Mesh *colliderMesh)
+    void addCollider(Mesh *colliderMesh, glm::vec3 *velocitiesCudaPtr)
     {
-        Collider collider(colliderMesh, m_verticesNb);
+        Collider collider(colliderMesh, m_verticesNb, velocitiesCudaPtr);
         m_colliders.push_back(collider);
         m_colTriCudaPtrs.push_back(collider.trianglesCuda);
 
         if (m_trisPtr) cudaFree(m_trisPtr);
         cudaErrorCheck(cudaMalloc((void **) &m_trisPtr, sizeof(Triangle *)*m_colTriCudaPtrs.size()));
         cudaErrorCheck(cudaMemcpy(m_trisPtr, m_colTriCudaPtrs.data(), sizeof(Triangle *)*m_colTriCudaPtrs.size(), cudaMemcpyHostToDevice));
+        
+        m_colVelocitiesPtrs.push_back(collider.velocitiesCuda);
+        if (m_velsPtr) cudaFree(m_velsPtr);
+        cudaErrorCheck(cudaMalloc((void **) &m_velsPtr, sizeof(glm::vec3 *)*m_colVelocitiesPtrs.size()));
+        cudaErrorCheck(cudaMemcpy(m_velsPtr, m_colVelocitiesPtrs.data(), sizeof(glm::vec3 *)*m_colVelocitiesPtrs.size(), cudaMemcpyHostToDevice));
     };
 
     glm::vec3 *collisionsFBuffer() {return m_collisionsFBuffer;};
@@ -728,6 +756,8 @@ class CollisionSolver
 
     std::vector<Triangle *> m_colTriCudaPtrs; // stores CUDA pointers to colliders' triangles
     Triangle **m_trisPtr = nullptr;
+    std::vector<glm::vec3 *> m_colVelocitiesPtrs; 
+    glm::vec3 **m_velsPtr = nullptr;
 
     int m_verticesNb;
 
