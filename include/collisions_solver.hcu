@@ -8,9 +8,9 @@
 #include "simulation_params.h"
 
 // off-chip memory, readable by 100k threads
-__constant__ const float EPS = 10e-3f;
+__constant__ const float EPS = 10e-4f;
 __constant__ const int MAX_STACK_SIZE = 64;
-__constant__ const float MAX_SCENE_BOUNDS = 100.0;
+__constant__ const float MAX_SCENE_BOUNDS = 50.0;
 __constant__ const float CLOTH_THICKNESS = 0.03f; // cloth thickness
 
 struct NodeInfo {
@@ -42,6 +42,8 @@ __device__ inline glm::vec4 computeIntersection(Triangle &tri, int triIdx, glm::
 }
 
 __device__ bool intersectSegmentTriangle(
+    glm::vec3 *colors,
+    int colliderId,
     int i, 
     int j, 
     int tid, 
@@ -60,62 +62,97 @@ __device__ bool intersectSegmentTriangle(
 
     Triangle tri = triangles[triIdx];
 
+
     glm::vec3 ab = (tri.p1 - tri.p0);
     glm::vec3 ac = (tri.p2 - tri.p0);
 
-    glm::vec3 n = tri.normal; 
-    // if (tid==6580 && triIdx==0) printf("\n n = %f %f %f // ab =%f %f %f // ac =%f %f %f // p0 = %f %f %f // p1 = %f %f %f // p2 = %f %f %f ", n.x, n.y, n.z, ab.x, ab.y, ab.z, ac.x, ac.y, ac.z, tri.p0.x, tri.p0.y, tri.p0.z, tri.p1.x, tri.p1.y, tri.p1.z, tri.p2.x, tri.p2.y, tri.p2.z);
+    glm::vec3 n = tri.normal;
+
     
     float t, u, v, w;
     
     float det = dot(qp, n);
-    float res = dot(normalize(qp), normalize(n));
-    if (res < EPS) 
-    {
-        return false; // ray is parallel to or points away from triangle
+
+    glm::vec3 sideP = origin - tri.p0;
+    float isPBehind = dot(sideP, n);
+
+    if (tid==2012) {
+        colors[tid] = glm::vec3(0.0f, 2.0f, 0.0f);
     }
-    
+
+    if (det > 10e-6 && isPBehind < 10e-6)
+    {
+        // if (tid== 2012) printf("\n 1 --> n = %f %f %f sideP = %f %f %f, isPBehind = %f \n det = %f, dir = %f %f %f", n.x, n.y, n.z, sideP.x, sideP.y, sideP.z, isPBehind, det, dir.x, dir.y, dir.z);
+        return false;
+
+    }
+    if (det <= EPS)  // det <= 0.0
+    {
+        // if (tid==2048) printf("\nNW 0: det =%f, res= %f", det, res);
+        return false; // ray is parallel to triangle or does not point towards triangle
+    }
     glm::vec3 ap = (origin - tri.p0);
     t = dot(ap, n);
-    glm::vec2 limits = glm::vec2(0.001f, 0.9f)*CLOTH_THICKNESS*det;
+    glm::vec2 limits = glm::vec2(0.01f, 0.9f)*CLOTH_THICKNESS*det;
     if (t < limits.x || t > limits.y || abs(t) >= abs((*hitPtInfos).w) )
     {
+        // if (i==32 && j==32) {
+        //     printf("\nNW 1: det =%f, limits= %f %f , t=%f", det, limits.x, limits.y, t);
+        //}
         return false;
     }
 
     glm::vec3 e = cross(qp, ap); // scalar triple (pq, pa, pc)
     v =  dot(ac, e);
-    if (v < -EPS || v - det > EPS) 
+    if (v/det < -EPS || v - det > EPS) 
     {
+        // if (i==32 && j==32) {
+        //     printf("\nNW 2: det =%f, limits= %f %f , t=%f, v/det=%f", det, limits.x, limits.y, t, v/det);
+        // }
+
         return false; 
     }
 
     w = -dot(ab, e);
-    if (w < -EPS || w - det > EPS) 
+    if (w/det < -EPS || w - det > EPS) 
     {
-
+        // if (tid==2048) {
+        //     printf("\nNW 3: det =%f, limits= %f %f , t=%f, w/det=%f", det, limits.x, limits.y, t, w/det);
+        //     }
+        
         return false;
     }
 
     u = det - v - w;
-    if (u < -EPS)
+    if (u/det < -EPS)
     {   
+        // if (tid==2048) {
+        //     printf("\nNW 4: det =%f, limits= %f %f , t=%f, u/det=%f", det, limits.x, limits.y, t, u/det);
+        //     }
+
         return false;
     }
 
     *hitPtInfos = computeIntersection(tri, triIdx, glm::vec4(u, v, w, t), det, qp);
-
+    glm::vec4 test = glm::vec4(u, v, w, t)/det;
+    glm::vec3 test2 = normalize(qp);
+    if (colliderId==2) {
+        // printf("\nn = %f %f %f sideP = %f %f %f, isPBehind = %f \n det = %f, dir = %f %f %f", n.x, n.y, n.z, sideP.x, sideP.y, sideP.z, isPBehind, det, dir.x, dir.y, dir.z);
+        // printf("\n det =%f res =%f \n norm_q= %f %f %f, \n n = %f %f %f, dir = %f %f %f", det, res, test2.x, test2.y, test2.z, n.x, n.y, n.z, dir.x, dir.y, dir.z);
+    }
     return true;
 
 }
 
 __device__ bool intersectRayAABB(
     int tid, 
+    int nodeId, // FOR DEBUGGING
     glm::vec3 origin, 
     glm::vec3 dir, 
     glm::vec3 bbmin, 
     glm::vec3 bbmax, 
-    float *tNear
+    float *tNear,
+    bool selfColl
     )
 {
     /**
@@ -138,12 +175,13 @@ __device__ bool intersectRayAABB(
             if (origin[i] < bbmin[i] || origin[i] > bbmax[i]) {
                 return false;
             }
-
+            if (selfColl) return false;
         }
         else
         {
             tNewNear = max(tNewNear, tMin[i]);
             tFar = min(tFar, tMax[i]);
+
 
             if (tNewNear > tFar) 
             {
@@ -152,7 +190,6 @@ __device__ bool intersectRayAABB(
         }
     }
     *tNear = tNewNear;
-    
     return true;
     
 }
@@ -206,17 +243,13 @@ __global__ void updateBVH(
 
     int tid = j*N +i;
 
-    // sBuff[tid] = reductionBuff[i];
-    // __syncthreads();
     if (tid <maxTid)
     {   
         int nodeId = leafNodes[tid];
         Node *node = &BVH[nodeId];
         do
         {
-            if (tid==0) printf("\n ---");
-            printf("\nCURRENT NODE = %i", nodeId);
-            __syncthreads();
+            // __syncthreads(); ?? how to sync remaining active threads?
 
             if (node->triCount != 0)
             {
@@ -224,15 +257,17 @@ __global__ void updateBVH(
 
                 for (int i=0; i<node->triCount; ++i)
                 {
-                    Triangle tri = triangles[triIndices[node->leftIdx + i]];
-                    // printf("tri vertices idx = %i %i %i", tri.i0, tri.i1, tri.i2);
-                    // printf("tri vertices idx = %i %i %i // first val = %f %f %f", tri.i0, tri.i1, tri.i2, verticesCloth[tri.i0].x,  verticesCloth[tri.i0].y,  verticesCloth[tri.i0].z);
-                    glm::vec3 p0 = vertices[tri.i0];
-                    glm::vec3 p1 = vertices[tri.i1];
-                    glm::vec3 p2 = vertices[tri.i2];
+                    Triangle *tri = &triangles[triIndices[node->leftIdx + i]];
+                    tri->p0 = vertices[tri->i0];
+                    tri->p1 = vertices[tri->i1];
+                    tri->p2 = vertices[tri->i2];
 
-                    glm::vec3 triMin = min(min(p0, p1), p2);
-                    glm::vec3 triMax = max(max(p0, p1), p2);
+                    tri->centroid = (tri->p0 + tri->p1 + tri->p2)/3.0f;
+
+                    tri->normal = cross(tri->p1 - tri->p0, tri->p2 - tri->p0);
+
+                    glm::vec3 triMin = min(min(tri->p0, tri->p1), tri->p2);
+                    glm::vec3 triMax = max(max(tri->p0, tri->p1), tri->p2);
 
                     aabb->aabbMin = min(node->aabb.aabbMin, triMin);
                     aabb->aabbMax = max(node->aabb.aabbMax, triMax);
@@ -252,7 +287,6 @@ __global__ void updateBVH(
             }
             if (node->isUpdated)
             {
-                printf("\n NODE UPDATED <!> = %i", nodeId);
                 int parentId = node->parentIdx;
                 Node *parentNode = &BVH[parentId];
                 if (parentNode->leftIdx == nodeId && nodeId > 0)
@@ -266,58 +300,13 @@ __global__ void updateBVH(
     }
 }
 
-// __global__ void reduction(
-
-//     int *reductionBuff,
-//     Node *BVH
-// )
-// {
-//     extern __shared__ int sBuff[];
-
-//     int tid = threadIdx.x;
-//     int i = tid + blockIdx.x*blockDim.x;
-
-//     sBuff[tid] = reductionBuff[i];
-//     __syncthreads();
-
-//     // hypothesis: the array size is of length blockDim.x
-//     for (int s = 2; s<blockDim.x; s<<=1)
-//     {
-//         printf("\ntid = %i, s = %i", tid, s);
-
-//         if (tid%s==0)
-//         {
-//             int leftChildIdx = sBuff[tid]; // COALESCED ACCESS w/ OTHER THREADS<!>
-//             if (leftChildIdx > -1)
-//             {
-//                 Node &leftChild = BVH[leftChildIdx];
-//                 printf("\ntid = %i, s = %i, blockDim.x/2 = %i && element = %i", tid, s, blockDim.x/2, leftChildIdx);
-                
-//                 int rightChildIdx = sBuff[tid+s/2]; // COALESCED ACCESS w/ OTHER THREADS<!>
-
-//                 if (rightChildIdx > -1)
-//                 {
-//                     Node &rightChild = BVH[rightChildIdx];
-//                     Node *parent = &BVH[leftChild.parentIdx];
-//                     updateAABB(parent, leftChild, rightChild);
-//                     printf("\n UPDATING BOUNDING BOX OF PARENT AT idx = %i // CHILDREN = (l) %i && (r) %i \n tid = %i, s = %i", 
-//                     leftChild.parentIdx, leftChildIdx, rightChildIdx, tid, s);
-//                 }
-
-
-//                 sBuff[tid] = leftChild.parentIdx;
-//             }
-//         }
-//         __syncthreads();
-//     }
-// }
-
 __global__ void collisionDetection(
     int colliderId,
     int N, 
     int maxTid, 
     glm::vec3 *origins, 
     glm::vec3 *dirs, 
+    glm::vec3 *colors,
     Node *BVH, 
     Triangle *triangles, 
     GLuint *triIndices, 
@@ -331,21 +320,20 @@ __global__ void collisionDetection(
     int i = threadIdx.y + blockIdx.y*blockDim.y;
 
     int tid = j*N+i;
-
-
     
     if (tid < maxTid)
     {
+        bool isSelfColl = (colliderId == 2);
         glm::ivec2 hitColTri = hitColliderTri[tid];
         glm::vec4 hitInfo = hitPointInfo[tid];
-        glm::vec3 dir = dirs[tid] * factor;
+        glm::vec3 dir = dirs[tid] * factor; // normal * factor -> factor is either -1.0 or 1.0 (so dir is either -n or n)
         glm::vec3 origin = origins[tid];
 
         int rootIndex = 0;
         Node *currentNode = &BVH[rootIndex];
 
         float tNear;
-        if (!intersectRayAABB(tid, origin, dir, currentNode->aabb.aabbMin, currentNode->aabb.aabbMax, &tNear)) 
+        if (!intersectRayAABB(tid, rootIndex, origin, dir, currentNode->aabb.aabbMin, currentNode->aabb.aabbMax, &tNear, isSelfColl)) 
         {
             return;
         }
@@ -361,8 +349,6 @@ __global__ void collisionDetection(
             NodeInfo &current = pop(stack, &stackSize);
             currentNode = &BVH[current.index];
 
-            
-
             if (current.distToBVH > MAX_SCENE_BOUNDS) continue;
 
             if (currentNode->triCount != 0 ) // if the current node is a leaf node -> narrow phase
@@ -371,7 +357,7 @@ __global__ void collisionDetection(
                 {
 
                     GLuint idx = triIndices[currentNode->leftIdx + k];
-                    if (intersectSegmentTriangle(i, j, tid, origin, dir, triangles, idx, &hitInfo))
+                    if (intersectSegmentTriangle(colors, colliderId, i, j, tid, origin, dir, triangles, idx, &hitInfo))
                     {
                         hitColTri = glm::ivec2(colliderId, idx);
                     }
@@ -382,21 +368,22 @@ __global__ void collisionDetection(
                 // fetching 2 children info and performing BV intersection on them
                 NodeInfo leftChildInfo = NodeInfo {currentNode->leftIdx, 0.0f };
                 Node *leftChild = &BVH[leftChildInfo.index];
-                if (intersectRayAABB(tid, origin, dir, leftChild->aabb.aabbMin, leftChild->aabb.aabbMax, &leftChildInfo.distToBVH)) 
+                if (intersectRayAABB(tid, leftChildInfo.index, origin, dir, leftChild->aabb.aabbMin, leftChild->aabb.aabbMax, &leftChildInfo.distToBVH, isSelfColl)) 
                 {
                     push(stack, &stackSize, leftChildInfo);
                 }
 
                 NodeInfo rightChildInfo = NodeInfo {currentNode->leftIdx+1, 0.0f};
                 Node *rightChild = &BVH[rightChildInfo.index];
-                if (intersectRayAABB(tid, origin, dir, rightChild->aabb.aabbMin, rightChild->aabb.aabbMax, &rightChildInfo.distToBVH)) 
+                if (intersectRayAABB(tid, rightChildInfo.index, origin, dir, rightChild->aabb.aabbMin, rightChild->aabb.aabbMax, &rightChildInfo.distToBVH, isSelfColl)) 
                 {
                     push(stack, &stackSize, rightChildInfo);
                 }
             
             }
 
-        }    
+        }
+
     hitPointInfo[tid] = hitInfo;
     hitColliderTri[tid] = hitColTri;
     }
@@ -405,14 +392,16 @@ __global__ void collisionDetection(
 
 __device__ glm::vec3 interpolateVelocity(
     Triangle &tri,
+    glm::vec4 barCoords,
     glm::vec3 *velocities
 )
 {
-    return (velocities[tri.i0] + velocities[tri.i1] + velocities[tri.i2])/3.0f;
+    return (velocities[tri.i0]*barCoords.x + velocities[tri.i1]*barCoords.y + velocities[tri.i2]*barCoords.z);
 }
 __global__ void collisionResponse(
     int N, 
     int maxTid, 
+    glm::vec3 *color,
     glm::vec3 *pos, 
     glm::vec3 *velCloth, 
     glm::vec3 **velCollidersPtr,
@@ -434,15 +423,22 @@ __global__ void collisionResponse(
     glm::ivec2 hit = hitColliderTri[tid];
 
     glm::vec3 collisionF = glm::vec3(0.0f);
+    glm::vec3 c = glm::vec3(0.75f, 0.0f, 0.0f);
 
     if (tid < maxTid)
     {
         if (hit.x > -1 && hit.y > -1)
         {
+            if (hit.x==2) {
+                c = glm::vec3(0.0f, 2.0f, 0.0);
+            }
+
 
             // TODO -> tangent & normal velocities => friction coef
             Triangle *tris = trianglesPtr[hit.x];
             Triangle tri = tris[hit.y];
+            glm::vec4 hitInfo = hitPointInfo[tid];
+            
             glm::vec3 F = OutFBuffer[tid];
             glm::vec3 n = normalize(tri.normal);
 
@@ -455,7 +451,10 @@ __global__ void collisionResponse(
             
             glm::vec3 T = F - N;
             float normT = sqrt(dot(T, T));
-            glm::vec3 v = velCloth[tid] - interpolateVelocity(tri, velCollidersPtr[hit.x]);
+
+            glm::vec3 vCloth = velCloth[tid];
+            glm::vec3 vCollider =  interpolateVelocity(tri, hitInfo, velCollidersPtr[hit.x]);
+            glm::vec3 v = vCloth - vCollider;
             glm::vec3 vT = v - dot(v,n)*n;
             float normVt = sqrt(dot(vT, vT));
 
@@ -481,17 +480,22 @@ __global__ void collisionResponse(
             
             collisionF = R + friction;
 
-            // velCloth[tid] = glm::vec3(0.0f); // velocity needs to be canceled as we don't want the point to keep sinking inside the collider
+            velCloth[tid] = vCollider ; // velocity needs to be canceled as we don't want the point to keep sinking inside the collider
 
-            glm::vec4 hitInfo = hitPointInfo[tid];
             pos[tid] = glm::vec3(hitInfo.x, hitInfo.y, hitInfo.z) + 0.1f*CLOTH_THICKNESS*n; // slightly offsetting the position of the vertex
 
         }
     OutFBuffer[tid] = collisionF;
+    if (tid != 2012) color[tid] = c;
     }
 }
 
-__global__ void resetCollisionBuffers(int maxTid, int N, glm::ivec2 *hitIdx, glm::vec4 *infoPt)
+__global__ void resetCollisionBuffers(
+    int maxTid, 
+    int N, 
+    glm::ivec2 *hitIdx, 
+    glm::vec4 *infoPt
+    )
 {
 
     int j = threadIdx.x + blockIdx.x*blockDim.x;
@@ -537,7 +541,7 @@ __global__ void rotation(
 
 struct Collider
 {
-    Mesh *colliderPtr;
+    Mesh *meshPtr;
     BVH *bvh;
 
     Node *treeCuda;
@@ -547,13 +551,22 @@ struct Collider
     GLuint *triIndicesCuda;
 
     glm::vec3 *velocitiesCuda;
+    bool resetVel;
 
-
-    Collider(Mesh *ptr, int nbVertices, glm::vec3 *velocitiesCudaPtr) : colliderPtr(ptr)
+    Collider(Mesh *ptr, int nbVertices, glm::vec3 *velocitiesCudaPtr) : 
+    meshPtr(ptr),
+    bvh(nullptr),
+    treeCuda(nullptr),
+    leafNodesCuda(nullptr),
+    reductionBuffCuda(nullptr),
+    trianglesCuda(nullptr),
+    triIndicesCuda(nullptr),
+    resetVel(false)
     {
-        bvh = new BVH(colliderPtr);
+        bvh = new BVH(meshPtr);
         if (!velocitiesCudaPtr)
-        {
+        {   
+            resetVel = true;
             cudaErrorCheck(cudaMalloc((void **) &velocitiesCuda, sizeof(glm::vec3)* (ptr->getVerticesNb()) ));
         }
         resetBuffers(nbVertices);
@@ -568,21 +581,33 @@ struct Collider
     void resetBuffers(int nbVertices)
     {
         // send bvh data to gpu
+        if (treeCuda) cudaErrorCheck(cudaFree(treeCuda));
         cudaErrorCheck(cudaMalloc((void **) &treeCuda, sizeof(Node)* (bvh->getNbNodes()) ));
         cudaErrorCheck(cudaMemcpy(treeCuda, bvh->getTree(), sizeof(Node)*bvh->getNbNodes(), cudaMemcpyHostToDevice));
 
+        if (leafNodesCuda) cudaErrorCheck(cudaFree(leafNodesCuda));
         cudaErrorCheck(cudaMalloc((void **) &leafNodesCuda, sizeof(int)* (bvh->sizeLeafNodes()) ));
         cudaErrorCheck(cudaMemcpy(leafNodesCuda, bvh->getLeafNodes(), sizeof(int)*bvh->sizeLeafNodes(), cudaMemcpyHostToDevice));
 
+        if (reductionBuffCuda) cudaErrorCheck(cudaFree(reductionBuffCuda));
         cudaErrorCheck(cudaMalloc((void **) &reductionBuffCuda, sizeof(int)* (bvh->sizeReducBuff()) ));
         cudaErrorCheck(cudaMemcpy(reductionBuffCuda, bvh->getReductionBuff(), sizeof(int)*bvh->sizeReducBuff(), cudaMemcpyHostToDevice));
 
-
+        if (trianglesCuda) cudaErrorCheck(cudaFree(trianglesCuda));
         cudaErrorCheck(cudaMalloc((void **) &trianglesCuda, sizeof(Triangle)* bvh->getNbTri() ));
         cudaErrorCheck(cudaMemcpy(trianglesCuda, bvh->tri(), sizeof(Triangle) * bvh->getNbTri(), cudaMemcpyHostToDevice));
 
+        if (triIndicesCuda) cudaErrorCheck(cudaFree(triIndicesCuda));
         cudaErrorCheck(cudaMalloc((void **) &triIndicesCuda, sizeof(GLuint)*bvh->getNbtriIdx()));
         cudaErrorCheck(cudaMemcpy(triIndicesCuda, bvh->triIndices(), sizeof(GLuint)* bvh->getNbtriIdx(), cudaMemcpyHostToDevice));
+
+        if (resetVel)  
+        {
+            cudaErrorCheck(cudaFree(velocitiesCuda));
+            cudaErrorCheck(cudaMalloc((void **) &velocitiesCuda, sizeof(glm::vec3)* (meshPtr->getVerticesNb())));
+        }
+
+        
 
     }
 };
@@ -604,33 +629,45 @@ class CollisionSolver
     };
 
     void reset()
-    {
+    { 
+        if (m_collisionsFBuffer) cudaErrorCheck(cudaFree(m_collisionsFBuffer));
+        std::vector<glm::vec3> Fbuffers(m_verticesNb, glm::vec3(0.0f));
+        cudaErrorCheck(cudaMalloc((void **) &m_collisionsFBuffer, sizeof(glm::vec3)*m_verticesNb));
+        cudaErrorCheck(cudaMemcpy(m_collisionsFBuffer, Fbuffers.data(), sizeof(glm::vec3)*m_verticesNb, cudaMemcpyHostToDevice));
+
         for (auto &collider: m_colliders)
         {
+            
             collider.resetBuffers(m_verticesNb);
         }
+
     }
 
-    void solve(Plane *cloth, glm::vec3 *v, SimulationParams *params, glm::vec3 *FBuff) 
+    void solve(Plane *cloth, glm::vec3 *v, SimulationParams &params, glm::vec3 *FBuff) 
     {
         // UPDATING BVH
-        Collider updtCollider = m_colliders[0];
+        Collider updtCollider = m_colliders[m_colliders.size()-1];
 
-        printf("\n--------------------------- SEPARATION ---------------------------");
 
-        int sqrtN = int(ceil(sqrt(updtCollider.colliderPtr->getVerticesNb())));
+        int sqrtN = int(ceil(sqrt(updtCollider.meshPtr->getVerticesNb())));
         dim3 colGrid((sqrtN+31)/32, (sqrtN+31)/32, 1);
         dim3 colBlock(32, 32, 1);
-        glm::mat4 rot = glm::rotate(glm::mat4(1.0f), 0.01f, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        float rotAngle = 0.0f;
+        if (params.isRotating)
+        {
+            rotAngle = 0.001f;
+        }
+        glm::mat4 rot = glm::rotate(glm::mat4(1.0f), rotAngle, glm::vec3(0.0f, 1.0f, 0.0f));
         rotation<<<colGrid, colBlock>>>(
-            updtCollider.colliderPtr->getVerticesNb(),
+            updtCollider.meshPtr->getVerticesNb(),
             sqrtN,
-            (glm::vec3 *) updtCollider.colliderPtr->getDataPtr(0),
+            (glm::vec3 *) updtCollider.meshPtr->getDataPtr(0),
             updtCollider.velocitiesCuda,
             rot,
-            updtCollider.colliderPtr->getModelMatrix(),
-            glm::inverse(updtCollider.colliderPtr->getModelMatrix()),
-            params->timeStep
+            updtCollider.meshPtr->getModelMatrix(),
+            glm::inverse(updtCollider.meshPtr->getModelMatrix()),
+            params.timeStep
         );
         cudaErrorCheck(cudaDeviceSynchronize());
 
@@ -657,7 +694,7 @@ class CollisionSolver
             updtCollider.treeCuda,
             updtCollider.trianglesCuda,
             updtCollider.triIndicesCuda,
-            (glm::vec3 *) updtCollider.colliderPtr->getDataPtr(0)
+            (glm::vec3 *) updtCollider.meshPtr->getDataPtr(0)
             );
         cudaErrorCheck(cudaDeviceSynchronize());
 
@@ -677,9 +714,11 @@ class CollisionSolver
         for (int i=0; i< (int) m_colliders.size(); ++i)
         {   
             auto &collider = m_colliders[i];
-
-            for (float dir = -1.0; dir < 2.0; dir+=2.0)
+        
+            for (float factor = -1.0; factor < 2.0; factor+=2.0)
             {
+    
+                // if (dir>0.0 && i==2) continue;
                 // raytracing using velocity
                 collisionDetection<<<gridDim, blockDim>>>(
                     i,
@@ -687,19 +726,23 @@ class CollisionSolver
                     cloth->getVerticesNb(), 
                     (glm::vec3 *) cloth->getDataPtr(0),
                     (glm::vec3 *) cloth->getDataPtr(1),
+                    (glm::vec3 *) cloth->getDataPtr(3),
                     collider.treeCuda,
                     collider.trianglesCuda,
                     collider.triIndicesCuda,
                     m_hitColliderTri,
                     m_hitPointInfo,
-                    dir
+                    factor
                 );
                 cudaErrorCheck(cudaDeviceSynchronize());
+
+                if (i != 2) factor = 3.0;
             }
         }
         collisionResponse<<<gridDim, blockDim>>>(
             cloth->N(), 
             cloth->getVerticesNb(),
+            (glm::vec3 *) cloth->getDataPtr(3),
             (glm::vec3 *) cloth->getDataPtr(0),
             v,
             m_velsPtr,
@@ -707,9 +750,9 @@ class CollisionSolver
             m_trisPtr,
             m_hitColliderTri,
             m_hitPointInfo,
-            params->Kf,
-            params->timeStep,
-            params->unitM
+            params.Kf,
+            params.timeStep,
+            params.unitM
         );
         cudaErrorCheck(cudaDeviceSynchronize());
 
@@ -738,7 +781,7 @@ class CollisionSolver
     {
         for (auto &collider: m_colliders)
         {
-            collider.colliderPtr->bindCudaData();
+            collider.meshPtr->bindCudaData();
         }
     }
 
@@ -746,7 +789,7 @@ class CollisionSolver
     {
         for (auto &collider: m_colliders)
         {
-            collider.colliderPtr->unbindCudaData();
+            collider.meshPtr->unbindCudaData();
         }
     }
 

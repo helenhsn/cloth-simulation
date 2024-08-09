@@ -67,14 +67,6 @@ struct AABB
         aabbMax = max(aabbMax, triMax);
     };
 
-    __device__ void merge(glm::vec3 p0, glm::vec3 p1, glm::vec3 p2)
-    {   
-        glm::vec3 triMin = min(min(p0, p1), p2);
-        glm::vec3 triMax = max(max(p0, p1), p2);
-
-        aabbMin = min(aabbMin, triMin);
-        aabbMax = max(aabbMax, triMax);
-    };
 };
 
 struct Node
@@ -94,7 +86,7 @@ struct Node
 class BVH
 {
     public:
-    BVH(Mesh *mesh) 
+    BVH(Mesh *mesh)
     : 
     m_NTri(mesh->getIndicesNb()/3), 
     m_nodesNb(0), 
@@ -115,8 +107,6 @@ class BVH
 
         // allocating memory for node pool
         int nbMaxNodes = 2 * nbTri;
-        std::cout << "size tree = " << nbMaxNodes << std::endl;
-        std::cout << "nb Tri mesh = " << nbTri << std::endl;
         tree = new Node[nbMaxNodes];
 
 
@@ -141,8 +131,7 @@ class BVH
         buildTreeRec(0, 1);
         
         std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() -start;
-        std::cout << "BVH built in " << elapsed_seconds.count() << "s -------------------- \n\n";
-        printf("\nNB LEAF NODES = %i \n\n", m_leafNodes.size());
+        printf("BVH for mesh of %i triangles built in %f -------------------- \n\n", nbTri, (float) elapsed_seconds.count());
 
         m_reductionBuff = m_leafNodes;
         // printTree(0);
@@ -252,11 +241,11 @@ class BVH
 
         glm::vec3 AABBmin = node.aabb.aabbMin;
         glm::vec3 AABBmax = node.aabb.aabbMax;
-        glm::vec3 step = (AABBmax - AABBmin)/199.0f;
+        glm::vec3 step = (AABBmax - AABBmin)/499.0f;
         for (int axis = 0; axis<3; ++axis)
         {
 
-            for (int k = 0; k<200; ++k)
+            for (int k = 0; k<500; ++k)
             {
 
                 // testing one axis per triangle in the current node

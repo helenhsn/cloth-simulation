@@ -11,6 +11,7 @@ float w_width = 1500.0;
 float lastX;
 float lastY;
 bool firstMouse = true;
+SimulationParams simParams;
 
 // callbacks
 void windowResizeCallback(GLFWwindow *window, int width, int height);
@@ -23,6 +24,8 @@ Camera camera(glm::vec3(2.0, 10., 20.0));
 
 float dt = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;
+
+
 int main()
 {
     // initializing OpenGL context using GLFW & GLAD
@@ -32,6 +35,8 @@ int main()
         glfwTerminate();
         return -1;
     }
+    glfwWindowHint(GLFW_SAMPLES, 4);
+
     GLFWwindow *window = glfwCreateWindow(static_cast<int>(w_width), static_cast<int>(w_height), "Cloth Simulation", 0, nullptr);
     if(!window)
     {
@@ -70,17 +75,23 @@ int main()
     ShaderProgram cloth_pgrm("../shaders/cloth.vs", "../shaders/cloth.fs");
 
 
-    glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.08f, 1.0f, 0.08f));
-    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 2.8f, 0.0f));
-    Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 64);
+    glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.04f, 1.0f, 0.04f));
+    modelCloth = glm::translate(modelCloth, glm::vec3(0.0f, 2.2f, 0.0f));
+    Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 128); // N = 128 OK -> put scale to 0.04f if N=128
     
+    // DEBUG
+    // glm::mat4x4 modelCloth = glm::scale(glm::mat4(1.0f), glm::vec3(0.08f, 1.0f, 0.08f));
+    // modelCloth = glm::translate(modelCloth, glm::vec3(1.4f, 2.2f, 0.0f));
+    // Plane *cloth = new Plane(cloth_pgrm.glid, modelCloth, 32); // N = 128 OK -> put scale to 0.04f if N=128
+    
+
     Simulation *sim = new Simulation(cloth);
     
     glm::mat4 scaleGround = glm::scale(glm::mat4(1.0f), 3000.0f*glm::vec3(1.0f, 0.0f, 1.0f));
     glm::mat4 modelGround = glm::translate(glm::mat4(1.0f), -1000.0f*glm::vec3(1.0f, 0.0f, 1.0f))*scaleGround;
     Plane *ground = new Plane(ground_pgrm.glid, modelGround, 50, {true, false, false});
     
-    glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 1.0f, 2.0f));
+    glm::mat4 modelSphere = glm::translate(glm::mat4(1.0f), glm::vec3(2.5f, 1.0f, 2.0f));
 
     glm::mat4 modelSimpleCollider = glm::translate(glm::mat4(1.0f), glm::vec3(2.0f, 8.0f, 2.0f));
     Plane *simpleCollider = new Plane(simple_pgrm.glid, modelSimpleCollider, 10);
@@ -100,9 +111,10 @@ int main()
 
 
     Mesh *chosenCollider = sphere;
-    sim->addCollider(chosenCollider);
     sim->addCollider(ground);
+    sim->addCollider(chosenCollider);
     // sim->addCollider(cloth);
+
 
     cudaDeviceProp prop;
     cudaErrorCheck(cudaGetDeviceProperties(&prop, 0));
@@ -113,6 +125,8 @@ int main()
 
     // Rendering options
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_MULTISAMPLE);  
+
 
     while (!glfwWindowShouldClose(window))
     {
@@ -128,7 +142,7 @@ int main()
         keyboard_callback(window);
 
         // run simulation 
-        sim->run(currentFrame);
+        sim->run(currentFrame, simParams);
 
         // camera matrices
         glm::mat4 projection = camera.projectionMatrix(w_width, w_height);
@@ -160,7 +174,7 @@ int main()
         glPolygonMode(GL_FRONT_AND_BACK,  wireframeMode);
         cloth->draw();
 
-        gui->buildWindow(sim, cloth); // TODO delete cast when implementing Implicit Solver <!>
+        gui->buildWindow(sim, &simParams, cloth); // TODO delete cast when implementing Implicit Solver <!>
         gui->render();
 
         glfwSwapBuffers(window);
@@ -199,7 +213,7 @@ void mouseCallback(GLFWwindow* window, double xposIn, double yposIn)
         lastX = xpos;
         lastY = ypos;
 
-        camera.processRotation(offsetX, offsetY);
+        camera.processRotation(simParams, offsetX, offsetY);
     }
 
     else if (status == GLFW_RELEASE) firstMouse = true;
@@ -212,13 +226,13 @@ void keyboard_callback(GLFWwindow *window)
         glfwSetWindowShouldClose(window, true);
 
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        camera.processTranslation(Camera_Movement::FORWARD, dt);
+        camera.processTranslation(simParams, Camera_Movement::FORWARD, dt);
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        camera.processTranslation(Camera_Movement::BACKWARD, dt);
+        camera.processTranslation(simParams, Camera_Movement::BACKWARD, dt);
     if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        camera.processTranslation(Camera_Movement::LEFT, dt);
+        camera.processTranslation(simParams, Camera_Movement::LEFT, dt);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        camera.processTranslation(Camera_Movement::RIGHT, dt);
+        camera.processTranslation(simParams, Camera_Movement::RIGHT, dt);
      if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
-        camera.processTranslation(Camera_Movement::UP, dt);
+        camera.processTranslation(simParams, Camera_Movement::UP, dt);
 }

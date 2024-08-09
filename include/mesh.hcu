@@ -44,7 +44,8 @@ private:
     int m_nbCudaVBOs = 0;
     float **m_dataPtrVBOs;
     cudaGraphicsResource_t *m_cudaResVBOs; // Cuda ptr that will point to OpenGL's VBOs
-    
+    std::vector<bool> m_isCudaShared;
+
     int m_verticesNb;
     int m_indicesNb;
 
@@ -57,7 +58,18 @@ protected:
 
 public:
     Mesh()=default;
-    Mesh(GLint pgrmGLid, const Data &data, std::vector<bool> isCudaShared, GLenum prim = GL_TRIANGLES): m_data(data), m_glid(pgrmGLid), m_nbCudaVBOs(isCudaShared.size()), m_primOpenGL(prim)
+    Mesh(
+        GLint pgrmGLid, 
+        const Data &data, 
+        std::vector<bool> &isCudaShared, 
+        GLenum prim = GL_TRIANGLES
+        )
+    : 
+    m_data(data), 
+    m_glid(pgrmGLid), 
+    m_nbCudaVBOs(isCudaShared.size()), 
+    m_isCudaShared(isCudaShared),
+    m_primOpenGL(prim)
     {
 
         m_verticesNb = data.vertices.size();
@@ -211,8 +223,52 @@ public:
     std::vector<glm::vec3> &getVertices() {return m_data.vertices;};
     std::vector<glm::vec3> &getNormals() {return m_data.normals;};
 
+    Data &getInitialData() {return m_data;}
+
     void setPrimOpenGL(GLenum prim) { m_primOpenGL = prim; };
     glm::mat4 getModelMatrix() {return m_data.model;};
+
+    void resetMesh()
+    {
+        glBindVertexArray(m_VAO);
+
+        ///////////////// VERTICES INITITIALIZATION /////////////////
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[0]);
+        glBufferData(GL_ARRAY_BUFFER, m_data.vertices.size()*sizeof(glm::vec3), m_data.vertices.data(), GL_STATIC_DRAW);
+        
+        ///////////////// NORMALS INITITIALIZATION /////////////////
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[1]);
+        glBufferData(GL_ARRAY_BUFFER, m_data.normals.size()*sizeof(glm::vec3), m_data.normals.data(), GL_STATIC_DRAW);
+        
+        ///////////////// UV INITITIALIZATION /////////////////
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[2]);
+        glBufferData(GL_ARRAY_BUFFER, m_data.uv.size()*sizeof(glm::vec2), m_data.uv.data(), GL_STATIC_DRAW);
+
+
+        ///////////////// COLOR INITITIALIZATION /////////////////
+        glBindBuffer(GL_ARRAY_BUFFER, m_VBOs[3]);
+        glBufferData(GL_ARRAY_BUFFER, m_data.color.size()*sizeof(glm::vec3), m_data.color.data(), GL_STATIC_DRAW);
+        
+
+
+        ///////////////// REGISTERING VERTICES VBO WITH CUDA <!> /////////////////
+        m_cudaResVBOs = new cudaGraphicsResource_t[m_nbCudaVBOs];
+        m_dataPtrVBOs = new float*[m_nbCudaVBOs];
+        
+        for (int i = 0; i<m_nbCudaVBOs; i++)
+        {
+            m_dataPtrVBOs[i] = nullptr;
+            m_cudaResVBOs[i] = nullptr;
+            if (m_isCudaShared[i])
+                cudaErrorCheck(cudaGraphicsGLRegisterBuffer(&m_cudaResVBOs[i], m_VBOs[i], cudaGraphicsMapFlagsNone));
+        }
+
+        // EBO
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_data.indices.size()*sizeof(GLuint), m_data.indices.data(), GL_STATIC_DRAW);
+
+        std::cout << "END RESET ------------------\n\n" << std::endl;
+    }
 };
 
 void printMat3(const glm::mat4& matrix) {
@@ -245,7 +301,9 @@ class Plane: public Mesh
 
     public:
     Plane(GLint pgrmGLid, glm::mat4x4 &model, int size_edge=4, std::vector<bool> shared = {true, true, false, true}): Mesh(pgrmGLid, Plane::init_mesh(size_edge, model), shared), m_N(size_edge)
-    {}
+    {
+        
+    }
 
     static Data init_mesh(int &N_, glm::mat4x4 &model) {
         std::vector<glm::vec3> vertices;
@@ -298,6 +356,8 @@ class Plane: public Mesh
 
         Data new_data = {vertices, normals, uv, color, indices, model}; 
         return new_data;
+
+
     };
 
     unsigned int N() {return m_N;};
@@ -308,7 +368,6 @@ class Plane: public Mesh
 
     private:
     unsigned int m_N;
-    float m_L;
 };
 
 class Sphere : public Mesh 

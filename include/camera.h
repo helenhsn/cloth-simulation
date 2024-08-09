@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include "simulation_params.h"
 
 #include <vector>
 
@@ -20,8 +21,6 @@ enum Camera_Movement {
 // Default camera values
 const float YAW         = -90.0f;
 const float PITCH       = 0.0f;
-const float SPEED       =  10.0f;
-const float SENSITIVITY =  0.10f;
 const float ZOOM        =  30.0f;
 
 
@@ -31,7 +30,15 @@ class Camera
 public:
 
     // constructor with vectors
-    Camera(glm::vec3 pos = glm::vec3(0.0, 0.0, 0.0), glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), float yaw = YAW, float pitch = PITCH) : m_front(glm::vec3(0.0f, 0.0f, -1.0f)), m_transSpeed(SPEED), m_rotSpeed(SENSITIVITY), m_zoom(ZOOM)
+    Camera(
+        glm::vec3 pos = glm::vec3(0.0, 0.0, 0.0), 
+        glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f), 
+        float yaw = YAW, 
+        float pitch = PITCH
+        ) 
+    : 
+    m_front(glm::vec3(0.0f, 0.0f, -1.0f)), 
+    m_zoom(ZOOM)
     {
         m_pos = pos;
         m_worldUp = up;
@@ -54,9 +61,9 @@ public:
     }
 
     // processes input received from any keyboard-like input system. Accepts input parameter in the form of camera defined ENUM (to abstract it from windowing systems)
-    void processTranslation(Camera_Movement direction, float deltaTime)
+    void processTranslation(SimulationParams &params,Camera_Movement direction, float deltaTime)
     {
-        float velocity = m_transSpeed * deltaTime;
+        float velocity = params.cameraSpeed * deltaTime;
         switch(direction)
         {
             case Camera_Movement::FORWARD:
@@ -79,10 +86,10 @@ public:
     }
 
     // processes input received from a mouse input system. Expects the offset value in both the x and y direction.
-    void processRotation(float xoffset, float yoffset, GLboolean constrainPitch = true)
+    void processRotation(SimulationParams &params,float xoffset, float yoffset, GLboolean constrainPitch = true)
     {
-        xoffset *= m_rotSpeed;
-        yoffset *= m_rotSpeed;
+        xoffset *= params.cameraSensitivity;
+        yoffset *= params.cameraSensitivity;
 
         m_yaw   += xoffset;
         m_pitch += yoffset;

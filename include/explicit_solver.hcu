@@ -200,7 +200,7 @@ __global__ void updateScheme(int maxTid, int N, glm::vec3 *x, glm::vec3 *v, glm:
 
 
 
-__global__ void initScheme(int maxTid, glm::vec3 *v, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc, int N)
+__global__ void initScheme(int maxTid,  int N, glm::vec3 *v, glm::vec3 *xIter, glm::vec3 *vIter, glm::vec3 *FIter, glm::vec3 *vIterAcc, glm::vec3 *FIterAcc)
 {
     int j = threadIdx.x + blockIdx.x*blockDim.x;
     int i = threadIdx.y + blockIdx.y*blockDim.y;
@@ -303,7 +303,7 @@ class ExplicitSolver
         } 
     }
 
-    void updateRK4(Plane *grid, SimulationParams *params, float kOffset, float yOffset)
+    void updateRK4(Plane *grid, SimulationParams &params, float kOffset, float yOffset)
     {
         
         // INIT SUB ITERATION BUFFERS FOR POSITION AND VELOCITY (y = y + yOffset * k)
@@ -319,7 +319,7 @@ class ExplicitSolver
             m_vIter, 
             m_FIter, 
             m_vIterAcc, 
-            params->unitM
+            params.unitM
             );
 
         cudaErrorCheck(cudaDeviceSynchronize());
@@ -337,8 +337,8 @@ class ExplicitSolver
                 m_vIter, 
                 m_FIter, 
                 spring.restLength, 
-                params->Ks, 
-                params->Kd
+                params.Ks, 
+                params.Kd
             );
         }
         cudaErrorCheck(cudaDeviceSynchronize());
@@ -352,11 +352,11 @@ class ExplicitSolver
             m_FIter, 
             m_FIterAcc, 
             (glm::vec3 *) grid->getDataPtr(1), 
-            params->unitM, 
-            params->wind, 
-            params->windNormed, 
-            params->gravity, 
-            params->Ka 
+            params.unitM, 
+            params.wind, 
+            params.windNormed, 
+            params.gravity, 
+            params.Ka 
             );
         cudaErrorCheck(cudaDeviceSynchronize());
     }
@@ -413,25 +413,25 @@ class ExplicitSolver
     {
         initScheme<<<m_gridSizeScheme, m_blockSize>>>(
             grid->getVerticesNb(), 
+            grid->N(),
             m_V, 
             m_xIter, 
             m_vIter, 
             m_FIter, 
             m_vIterAcc, 
-            m_FIterAcc,
-            grid->N()
+            m_FIterAcc
             );
         cudaErrorCheck(cudaDeviceSynchronize());
     }
 
-    void step(Plane *grid, SimulationParams *params ,glm::vec3 *collisionsFBuffer)
+    void step(Plane *grid, SimulationParams &params ,glm::vec3 *collisionsFBuffer)
     {
 
         // compute k1, k2, k3 and k4 iterations of RK4 algorithm
         updateRK4(grid, params, 1.0, 0.0);
-        updateRK4(grid, params, 2.0, params->timeStep*0.5);
-        updateRK4(grid, params, 2.0, params->timeStep*0.5);
-        updateRK4(grid, params, 1.0, params->timeStep);
+        updateRK4(grid, params, 2.0, params.timeStep*0.5);
+        updateRK4(grid, params, 2.0, params.timeStep*0.5);
+        updateRK4(grid, params, 1.0, params.timeStep);
 
         updateScheme<<<m_gridSizeScheme, m_blockSize>>>(
             grid->getVerticesNb(), 
@@ -441,8 +441,8 @@ class ExplicitSolver
             m_vIterAcc, 
             m_FIterAcc, 
             collisionsFBuffer,
-            params->timeStep, 
-            params->unitM
+            params.timeStep, 
+            params.unitM
             );
         cudaErrorCheck(cudaDeviceSynchronize());
 

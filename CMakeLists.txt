@@ -14,15 +14,18 @@ add_subdirectory(vendors/glfw) # contains a cmake file
 add_subdirectory(vendors/glm) # contains a cmakefile
 
 include_directories(cloth_sim vendors/imgui)
+include_directories(cloth_sim vendors/implot)
 include_directories(cloth_sim vendors/glad)
 include_directories(cloth_sim vendors/tinyply)
 
 cuda_include_directories(cloth_sim vendors/imgui)
+cuda_include_directories(cloth_sim vendors/implot)
 cuda_include_directories(cloth_sim vendors/glad)
 cuda_include_directories(cloth_sim vendors/tinyply)
 
 set(GLAD_SRC_DIR "${PROJECT_SOURCE_DIR}/vendors/glad")
 set(IMGUI_SRC_DIR "${PROJECT_SOURCE_DIR}/vendors/imgui")
+set(IMPLOT_SRC_DIR "${PROJECT_SOURCE_DIR}/vendors/implot")
 set(TINYPLY_SRC_DIR "${PROJECT_SOURCE_DIR}/vendors/tinyply")
 set(OBJPARSER_SRC_DIR "${PROJECT_SOURCE_DIR}/vendors/objparser")
 
@@ -33,7 +36,7 @@ set(CUDA_SEPARABLE_COMPILATION ON) # Allow multiple CUDA files compilation
 set (PROJECT_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/include")
 set (PROJECT_SRC_DIR      "${PROJECT_SOURCE_DIR}/src")
 
-file(GLOB_RECURSE SOURCES "${PROJECT_SRC_DIR}/*.cpp" "${PROJECT_SRC_DIR}/*.c" "${GLAD_SRC_DIR}/*.c" "${IMGUI_SRC_DIR}/*.cpp" "${TINYPLY_SRC_DIR}/*.hpp" "${OBJPARSER_SRC_DIR}/*.h")
+file(GLOB_RECURSE SOURCES "${PROJECT_SRC_DIR}/*.cpp" "${PROJECT_SRC_DIR}/*.c" "${GLAD_SRC_DIR}/*.c" "${IMGUI_SRC_DIR}/*.cpp" "${IMPLOT_SRC_DIR}/*.cpp" "${IMPLOT_SRC_DIR}/*.h" "${TINYPLY_SRC_DIR}/*.hpp" "${OBJPARSER_SRC_DIR}/*.h")
 file(GLOB_RECURSE SOURCES_CUDA "${PROJECT_SRC_DIR}/*.cu" "${PROJECT_INCLUDE_DIRS}/*.hcu")
 
 include_directories(${CUDA_INCLUDE_DIRS})

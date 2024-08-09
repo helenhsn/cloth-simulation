@@ -12,6 +12,11 @@ struct SimulationParams
     int nbSubSteps;
     bool isPaused;
     bool isCollisions;
+    bool isRotating;
+
+    // camera params
+    float cameraSpeed;
+    float cameraSensitivity;
 
     // solver params
     float Ks;
@@ -45,12 +50,22 @@ struct SimulationParams
         isPaused = !isPaused;
     };
 
+    void changeRotating() 
+    { 
+        isRotating = !isRotating;
+    };
+
+    void changeCollisions() 
+    { 
+        isCollisions = !isCollisions;
+    };
 
     SimulationParams() : 
-    timeStep(0.0016f),
+    timeStep(0.0025f),
     nbSubSteps(1), 
     isPaused(false),
     isCollisions(true),
+    isRotating(false),
     Ks(400.0f), 
     Kd(10.0f), 
     Ka(0.1f), 
@@ -58,7 +73,9 @@ struct SimulationParams
     wind(glm::vec3(0.0f)),
     windUI({0.0f, 0.0f, 0.0f}),
     gravity(glm::vec3(0.0f, -9.81f*unitM, 0.0f)),
-    Kf(0.4)
+    Kf(0.4),
+    cameraSpeed(10.0f),
+    cameraSensitivity(0.10f)
     { }
 
 };
